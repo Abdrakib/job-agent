@@ -1,0 +1,286 @@
+{
+  "owner": "Abdrakib",
+  "huggingface": "Abdourakib",
+  "portfolio": "https://abdourakib.com",
+  "github": "https://github.com/Abdrakib",
+  "last_synced": "2026-05-14T16:23:48.206574",
+  "repositories": [
+    {
+      "name": "ai-cs-tutor",
+      "github_url": "https://github.com/Abdrakib/ai-cs-tutor",
+      "live_demo": null,
+      "domain": "Education AI / NLP",
+      "description": "AI-powered computer science tutor using retrieval and web search to answer programming and CS questions.",
+      "stack": [
+        "Jupyter Notebook"
+      ],
+      "topics": [],
+      "skills_demonstrated": [
+        "semantic search",
+        "FAISS indexing",
+        "RAG pipeline",
+        "hallucination prevention",
+        "Gradio UI"
+      ],
+      "status": "complete",
+      "language": "Jupyter Notebook",
+      "last_updated": "2026-03-10T22:54:48Z",
+      "has_demo": false,
+      "stars": 0
+    },
+    {
+      "name": "ai_datascience_agent",
+      "github_url": "https://github.com/Abdrakib/ai_datascience_agent",
+      "live_demo": null,
+      "domain": "AutoML / Data Science",
+      "description": "A Claude-powered AI agent that acts as a junior ML engineer —  drop in any CSV, describe your goal, get a full ML pipeline  with tuning, SHAP explainability, and a shareable report.",
+      "stack": [
+        "Python"
+      ],
+      "topics": [],
+      "skills_demonstrated": [
+        "Claude tool use",
+        "open-source LLM",
+        "AutoML",
+        "SHAP",
+        "multi-variant architecture"
+      ],
+      "status": "complete",
+      "language": "Python",
+      "last_updated": "2026-05-04T23:10:50Z",
+      "has_demo": false,
+      "stars": 0
+    },
+    {
+      "name": "AI_ML-Portfolio",
+      "github_url": "https://github.com/Abdrakib/AI_ML-Portfolio",
+      "live_demo": "https://ai-ml-portfolio-theta.vercel.app",
+      "domain": "ML / Deep Learning / Computer Vision / NLP",
+      "description": "AI & Machine Learning portfolio showcasing projects in ML, Deep Learning, Computer Vision, NLP, and Data Science using Python.",
+      "stack": [
+        "Jupyter Notebook"
+      ],
+      "topics": [
+        "ai",
+        "computer-vision",
+        "data-science",
+        "deep-learning",
+        "machine-learning",
+        "nlp",
+        "portfolio",
+        "python"
+      ],
+      "skills_demonstrated": [
+        "breadth across ML domains",
+        "from-scratch implementations",
+        "applied ML",
+        "computer vision",
+        "NLP",
+        "data analysis"
+      ],
+      "status": "complete",
+      "language": "Jupyter Notebook",
+      "last_updated": "2026-03-10T01:39:22Z",
+      "has_demo": true,
+      "stars": 0
+    },
+    {
+      "name": "brain-tumor-ai-app",
+      "github_url": "https://github.com/Abdrakib/brain-tumor-ai-app",
+      "live_demo": "https://ai-ml-portfolio-theta.vercel.app",
+      "domain": "Medical AI / Computer Vision",
+      "description": "Deep learning web application for brain tumor detection from MRI scans with Grad-CAM explainability. Built with Python, FastAPI, and React.",
+      "stack": [
+        "TypeScript"
+      ],
+      "topics": [],
+      "skills_demonstrated": [
+        "medical image classification",
+        "Grad-CAM explainability",
+        "full-stack deployment",
+        "FastAPI",
+        "React",
+        "confidence thresholding"
+      ],
+      "status": "complete",
+      "language": "TypeScript",
+      "last_updated": "2026-03-14T01:15:05Z",
+      "has_demo": true,
+      "stars": 0
+    },
+    {
+      "name": "credit-risk-predictor",
+      "github_url": "https://github.com/Abdrakib/credit-risk-predictor",
+      "live_demo": "https://credit-risk-predictor-mpt9.onrender.com",
+      "domain": "FinTech / Machine Learning",
+      "description": "Machine learning web application predicting credit default risk with an interactive interface and trained model.",
+      "stack": [
+        "Jupyter Notebook"
+      ],
+      "topics": [],
+      "skills_demonstrated": [
+        "ML deployment",
+        "FastAPI",
+        "risk classification",
+        "explainability",
+        "production web app"
+      ],
+      "status": "complete",
+      "language": "Jupyter Notebook",
+      "last_updated": "2026-03-10T02:26:38Z",
+      "has_demo": true,
+      "stars": 0
+    },
+    {
+      "name": "Explainable_ML-Pipeline-Agent",
+      "github_url": "https://github.com/Abdrakib/Explainable_ML-Pipeline-Agent",
+      "live_demo": "https://huggingface.co/spaces/Abdourakib/explainable-ml-pipeline-agent",
+      "domain": "AutoML / Explainable AI",
+      "description": "ML pipeline that explains every step in plain English",
+      "stack": [
+        "Python"
+      ],
+      "topics": [],
+      "skills_demonstrated": [
+        "AutoML pipeline",
+        "SHAP explainability",
+        "hyperparameter tuning",
+        "open-source LLM inference",
+        "ZeroGPU deployment"
+      ],
+      "status": "complete",
+      "language": "Python",
+      "last_updated": "2026-05-04T23:11:57Z",
+      "has_demo": true,
+      "stars": 0
+    },
+    {
+      "name": "gpt-from-scratch",
+      "github_url": "https://github.com/Abdrakib/gpt-from-scratch",
+      "live_demo": "https://huggingface.co/Abdourakib/tinystories-gpt2-124m",
+      "domain": "LLM Research / Deep Learning",
+      "description": "GPT-2 trained from scratch on  1M children's stories",
+      "stack": [
+        "Jupyter Notebook"
+      ],
+      "topics": [],
+      "skills_demonstrated": [
+        "transformer architecture",
+        "LLM pretraining",
+        "instruction fine-tuning",
+        "cosine LR scheduling",
+        "gradient clipping",
+        "HuggingFace Hub deployment"
+      ],
+      "status": "complete",
+      "language": "Jupyter Notebook",
+      "last_updated": "2026-03-30T02:56:49Z",
+      "has_demo": true,
+      "stars": 0
+    },
+    {
+      "name": "ml-research-assistant",
+      "github_url": "https://github.com/Abdrakib/ml-research-assistant",
+      "live_demo": "https://huggingface.co/spaces/Abdourakib/ml-research-assistant",
+      "domain": "AI Research Tools / Agentic AI",
+      "description": "ML Research Assistant — AI-powered research tool with arxiv search, LLM leaderboard, model benchmarks, paper finder, and live AI news feed. Built with Gradio + Qwen2.5-7B.",
+      "stack": [
+        "Python"
+      ],
+      "topics": [],
+      "skills_demonstrated": [
+        "LLM integration",
+        "tool routing",
+        "fuzzy matching",
+        "custom Gradio UI",
+        "ZeroGPU deployment",
+        "API integration"
+      ],
+      "status": "complete",
+      "language": "Python",
+      "last_updated": "2026-05-10T02:47:22Z",
+      "has_demo": true,
+      "stars": 0
+    },
+    {
+      "name": "rakib-ai-portfolio",
+      "github_url": "https://github.com/Abdrakib/rakib-ai-portfolio",
+      "live_demo": "https://rakib-ai-portfolio.vercel.app",
+      "domain": "Portfolio / Frontend",
+      "description": "Personal AI & Machine Learning portfolio website showcasing my projects, demos, and research.",
+      "stack": [
+        "JavaScript"
+      ],
+      "topics": [],
+      "skills_demonstrated": [
+        "React",
+        "frontend animation",
+        "GitHub API integration",
+        "responsive design",
+        "Vercel deployment"
+      ],
+      "status": "complete",
+      "language": "JavaScript",
+      "last_updated": "2026-05-07T01:29:50Z",
+      "has_demo": true,
+      "stars": 0
+    },
+    {
+      "name": "Speech-emotion-recognition",
+      "github_url": "https://github.com/Abdrakib/Speech-emotion-recognition",
+      "live_demo": "https://huggingface.co/spaces/Abdourakib/Speech-emotion-demo",
+      "domain": "Audio AI / Deep Learning",
+      "description": "Speech Emotion Recognition using RAVDESS dataset and HuBERT model with Gradio demo",
+      "stack": [
+        "Jupyter Notebook"
+      ],
+      "topics": [],
+      "skills_demonstrated": [
+        "audio classification",
+        "HuBERT fine-tuning",
+        "Gradio deployment",
+        "feature extraction",
+        "HuggingFace Spaces"
+      ],
+      "status": "complete",
+      "language": "Jupyter Notebook",
+      "last_updated": "2026-03-21T02:56:43Z",
+      "has_demo": true,
+      "stars": 0
+    },
+    {
+      "name": "visual-analyst-agent",
+      "github_url": "https://github.com/Abdrakib/visual-analyst-agent",
+      "live_demo": "https://huggingface.co/spaces/Abdourakib/visual-analyst-agent",
+      "domain": "Computer Vision / Multimodal AI",
+      "description": "AI-powered visual data analyst that reads any chart, table, or dashboard image and delivers professional trend analysis, structured data extraction, and interactive insights — powered by Google Gemini.",
+      "stack": [
+        "Python",
+        "Streamlit"
+      ],
+      "topics": [
+        "ai",
+        "computer-vision",
+        "data-analysis",
+        "gemini",
+        "llm",
+        "mutli-modal",
+        "portfolio",
+        "python3",
+        "streamlit"
+      ],
+      "skills_demonstrated": [
+        "multimodal LLM",
+        "Gemini API",
+        "data extraction from images",
+        "interactive visualization",
+        "HTML report generation"
+      ],
+      "status": "complete",
+      "language": "Python",
+      "last_updated": "2026-05-09T13:05:17Z",
+      "has_demo": true,
+      "stars": 1
+    }
+  ]
+}

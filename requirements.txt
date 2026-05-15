@@ -1,0 +1,38 @@
+# Core
+anthropic
+python-dotenv
+requests
+
+# Job Search
+httpx
+
+# Resume Parsing
+pymupdf
+
+# Resume PDF Building
+reportlab
+
+# Browser Automation (for Workday etc)
+playwright
+
+# Database
+# sqlite3 is in the Python standard library — no pip package needed
+
+# Dashboard
+streamlit
+streamlit-extras
+
+# Email / notifications
+twilio
+google-auth
+google-auth-oauthlib
+google-auth-httplib2
+google-api-python-client
+
+# Scheduling
+apscheduler
+
+# Utilities
+pandas
+python-dateutil
+loguru
