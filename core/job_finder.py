@@ -294,9 +294,12 @@ def filter_by_location(jobs: list, work_location: str) -> list:
     if work_location == "remote":
         return [j for j in jobs if j.get("is_remote")]
     elif work_location == "hybrid":
+        # show remote + hybrid + anything without a clear onsite-only signal
         return [j for j in jobs if j.get("is_remote") or
                 "hybrid" in (j.get("location") or "").lower() or
-                "hybrid" in (j.get("title") or "").lower()]
+                "hybrid" in (j.get("title") or "").lower() or
+                not j.get("location") or
+                j.get("location", "").lower() in ["", "worldwide", "remote"]]
     elif work_location == "onsite":
         return [j for j in jobs if not j.get("is_remote")]
     else:  # any
