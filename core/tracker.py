@@ -185,7 +185,7 @@ def save_job(job: dict, scored_data: dict = None):
         job.get("company", ""),
         job.get("location", ""),
         1 if job.get("is_remote") else 0,
-        1 if "hybrid" in job.get("location", "").lower() else 0,
+        1 if any("hybrid" in (job.get(f, "") or "").lower() for f in ["location", "description", "title"]) else 0,
         job.get("employment_type", ""),
         job.get("apply_url", ""),
         job.get("apply_platform", ""),
@@ -314,6 +314,9 @@ def get_jobs(status: str = None, min_score: int = 0,
         query += " AND is_remote = 1"
     elif work_location == "hybrid":
         query += " AND (is_remote = 1 OR is_hybrid = 1)"
+    elif work_location == "onsite":
+        query += " AND is_remote = 0 AND is_hybrid = 0"
+    # any = no filter
 
     query += " ORDER BY priority_flag DESC, match_score DESC LIMIT ?"
     params.append(limit)
