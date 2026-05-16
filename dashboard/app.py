@@ -1,3 +1,4 @@
+import html
 import streamlit as st
 import sys
 import re
@@ -262,7 +263,10 @@ def render_job_card(job):
     platform = job.get("apply_platform", "direct")
     is_remote = job.get("is_remote", 0)
     location = "🌐 Remote" if is_remote else f"📍 {job.get('location', '')}"
-    reasoning = re.sub(r'<[^>]+>', '', job.get("reasoning", "") or "")
+    _reasoning_plain = re.sub(r"<[^>]+>", "", job.get("reasoning", "") or "").strip()
+    reasoning_display = html.escape(
+        _reasoning_plain[:160] + ("..." if len(_reasoning_plain) > 160 else "")
+    )
     salary_min = job.get("salary_min")
     salary_max = job.get("salary_max")
     salary = ""
@@ -288,7 +292,7 @@ def render_job_card(job):
             {platform_badge(platform)}
             {f'<span style="color:rgba(212,175,55,0.3);">|</span>{salary}' if salary else ''}
         </div>
-        {f'<div style="font-size:12px;color:rgba(240,234,214,0.45);margin-top:10px;line-height:1.6;border-top:1px solid rgba(212,175,55,0.08);padding-top:8px;">{reasoning[:160]}...</div>' if reasoning else ''}
+        {f'<div style="font-size:12px;color:rgba(240,234,214,0.45);margin-top:10px;line-height:1.6;border-top:1px solid rgba(212,175,55,0.08);padding-top:8px;">{reasoning_display}</div>' if reasoning_display else ''}
     </div>
     """, unsafe_allow_html=True)
 
@@ -469,7 +473,7 @@ with tab1:
     jobs = get_jobs(
         status=None if filter_status == "All" else filter_status,
         min_score=min_score,
-        work_location=location_filter,
+        work_location="any",
         limit=100
     )
 
