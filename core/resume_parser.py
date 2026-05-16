@@ -22,10 +22,7 @@ def extract_text_from_pdf(pdf_path: Path) -> str:
 
 
 def parse_resume_with_claude(raw_text: str) -> dict:
-    """
-    Send raw resume text to Claude and get back structured data.
-    This becomes the candidate DNA used across all applications.
-    """
+    """Send raw resume text to Claude and get back structured data."""
     response = client.messages.create(
         model="claude-sonnet-4-5",
         max_tokens=2000,
@@ -78,41 +75,116 @@ Return this exact JSON structure:
     )
 
     raw = response.content[0].text.strip()
-
-    # clean up any accidental markdown
     if raw.startswith("```"):
         raw = raw.split("```")[1]
         if raw.startswith("json"):
             raw = raw[4:]
     raw = raw.strip()
-
     return json.loads(raw)
+
+
+def _hardcoded_profile() -> dict:
+    """
+    Hardcoded candidate profile for Abdou Rakib Abente.
+    Used when base_resume.pdf is not available (e.g. on Railway).
+    Keep this up to date if your resume changes.
+    """
+    return {
+        "name": "Abdou Rakib Abente",
+        "email": "Rakibabente8@gmail.com",
+        "phone": "",
+        "github": "https://github.com/Abdrakib",
+        "huggingface": "https://huggingface.co/Abdourakib",
+        "portfolio": "https://abdourakib.com",
+        "linkedin": "",
+        "summary": (
+            "AI/ML Engineer and recent Computer Science graduate (Community College of Philadelphia, May 2026) "
+            "with hands-on experience in LLMs, computer vision, reinforcement learning, and autonomous agents. "
+            "Built 50+ ML projects deployed on HuggingFace and GitHub. Completed ML internship at Buildawn Labs "
+            "working on computer vision, LLMs, and RL. Passionate about building production-ready AI systems."
+        ),
+        "education": [
+            {
+                "degree": "Associate of Science in Computer Science",
+                "school": "Community College of Philadelphia",
+                "location": "Philadelphia, PA",
+                "graduation": "May 2026"
+            }
+        ],
+        "experience": [
+            {
+                "title": "Machine Learning Intern",
+                "company": "Buildawn Labs",
+                "duration": "Nov 2025 – Jan 2026",
+                "location": "Remote",
+                "bullets": [
+                    "Developed computer vision pipelines for real-time object detection",
+                    "Fine-tuned LLMs for domain-specific tasks using LoRA and PEFT",
+                    "Implemented reinforcement learning agents for sequential decision-making",
+                    "Deployed models to production using FastAPI and Docker"
+                ]
+            },
+            {
+                "title": "Direct Support Professional",
+                "company": "Current Employer",
+                "duration": "2024 – Present",
+                "location": "Philadelphia, PA",
+                "bullets": [
+                    "Provide individualized support and care coordination",
+                    "Demonstrate reliability, communication, and accountability"
+                ]
+            }
+        ],
+        "skills": {
+            "languages": ["Python", "SQL", "JavaScript", "Java", "C++"],
+            "ml_ai": [
+                "PyTorch", "TensorFlow", "Scikit-learn", "HuggingFace Transformers",
+                "LangChain", "OpenAI API", "Anthropic Claude API", "PEFT", "LoRA",
+                "Optuna", "SHAP", "XGBoost", "LightGBM"
+            ],
+            "specializations": [
+                "Large Language Models", "Computer Vision", "Reinforcement Learning",
+                "Natural Language Processing", "Autonomous Agents", "RAG",
+                "Generative AI", "Fine-tuning", "Model Deployment"
+            ],
+            "tools": [
+                "FastAPI", "Gradio", "Streamlit", "Docker", "Git", "AWS S3",
+                "HuggingFace Spaces", "ZeroGPU", "Jupyter", "VS Code", "Cursor"
+            ]
+        },
+        "certifications": [],
+        "languages_spoken": ["English", "French", "Wolof"],
+        "raw_text": "",
+        "total_projects": 50,
+        "github_username": "Abdrakib",
+        "huggingface_username": "Abdourakib"
+    }
 
 
 def get_candidate_profile() -> dict:
     """
     Main function — returns the full candidate profile.
-    Combines parsed resume + metadata for the agent to use.
+    Tries to parse base_resume.pdf if it exists.
+    Falls back to hardcoded profile (used on Railway / production).
     """
     pdf_path = DATA_DIR / "base_resume.pdf"
 
-    if not pdf_path.exists():
-        raise FileNotFoundError(f"Resume not found at {pdf_path}")
+    if pdf_path.exists():
+        print("Found base_resume.pdf — parsing with Claude...")
+        try:
+            raw_text = extract_text_from_pdf(pdf_path)
+            parsed = parse_resume_with_claude(raw_text)
+            parsed["raw_text"] = raw_text
+            parsed["total_projects"] = 50
+            parsed["github_username"] = "Abdrakib"
+            parsed["huggingface_username"] = "Abdourakib"
+            print(f"Resume parsed successfully for: {parsed.get('name', 'Unknown')}")
+            return parsed
+        except Exception as e:
+            print(f"PDF parsing failed ({e}), falling back to hardcoded profile...")
 
-    print("Extracting text from resume...")
-    raw_text = extract_text_from_pdf(pdf_path)
-
-    print("Parsing resume with Claude...")
-    parsed = parse_resume_with_claude(raw_text)
-
-    # add extra metadata the agent needs
-    parsed["raw_text"] = raw_text
-    parsed["total_projects"] = 45
-    parsed["github_username"] = "Abdrakib"
-    parsed["huggingface_username"] = "Abdourakib"
-
-    print(f"Resume parsed successfully for: {parsed.get('name', 'Unknown')}")
-    return parsed
+    print("Using hardcoded candidate profile (no PDF found)")
+    return _hardcoded_profile()
 
 
 if __name__ == "__main__":
@@ -120,8 +192,9 @@ if __name__ == "__main__":
     print("\n--- CANDIDATE PROFILE ---")
     print(f"Name: {profile['name']}")
     print(f"Email: {profile['email']}")
-    print(f"Phone: {profile['phone']}")
+    print(f"GitHub: {profile['github']}")
     print(f"Education: {profile['education'][0]['degree']} at {profile['education'][0]['school']}")
-    print(f"Skills: {', '.join(profile['skills']['ml_ai'][:5])}")
+    print(f"ML Skills: {', '.join(profile['skills']['ml_ai'][:5])}")
     print(f"Experience: {profile['experience'][0]['title']} at {profile['experience'][0]['company']}")
+    print(f"Total projects: {profile['total_projects']}")
     print("\nFull profile ready for agent use.")
