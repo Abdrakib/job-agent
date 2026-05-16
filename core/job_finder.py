@@ -1,161 +1,42 @@
 import requests
+import hashlib
 import os
+from datetime import datetime
 from dotenv import load_dotenv
 
 load_dotenv()
 
-RAPIDAPI_KEY = os.getenv("RAPIDAPI_KEY")
-JSEARCH_URL = "https://jsearch.p.rapidapi.com/search"
-
-HEADERS = {
-    "X-RapidAPI-Key": RAPIDAPI_KEY,
-    "X-RapidAPI-Host": "jsearch.p.rapidapi.com"
-}
+# Adzuna API (250 free/month, needs key)
+ADZUNA_APP_ID = os.getenv("ADZUNA_APP_ID", "")
+ADZUNA_APP_KEY = os.getenv("ADZUNA_APP_KEY", "")
 
 # Search queries tailored to Rakib's profile
-SEARCH_QUERIES = [
-    "Machine Learning Engineer intern",
-    "AI Engineer intern",
-    "ML Engineer entry level",
-    "NLP Engineer intern",
-    "Computer Vision Engineer intern",
-    "Deep Learning Engineer intern",
-    "AI Research intern",
-    "Data Scientist intern",
-    "Generative AI Engineer",
-    "LLM Engineer entry level",
-    "AI Engineer entry level",
-    "Junior ML Engineer",
-    "Applied ML Engineer intern",
-    "Python Developer AI intern",
-]
-
-# Philadelphia metro area — within ~40 min drive from zip 19149
-# Covers Philly + surrounding counties + South Jersey
-PHILADELPHIA_LOCATIONS = [
-    "Philadelphia Pennsylvania",
-    "King of Prussia PA",
-    "Conshohocken PA",
-    "Horsham PA",
-    "Blue Bell PA",
-    "Wayne PA",
-    "Malvern PA",
-    "Exton PA",
-    "Lansdale PA",
-    "Willow Grove PA",
-    "Cherry Hill NJ",
-    "Mount Laurel NJ",
-    "Marlton NJ",
-    "Camden NJ",
-    "Voorhees NJ",
-]
-
-# Remote/global locations
-REMOTE_LOCATIONS = [
-    "United States",
-    "Remote",
+ML_QUERIES = [
+    "machine learning engineer",
+    "AI engineer",
+    "NLP engineer",
+    "computer vision engineer",
+    "deep learning engineer",
+    "generative AI engineer",
+    "LLM engineer",
+    "data scientist",
+    "applied ML engineer",
+    "AI research intern",
+    "ML intern",
+    "AI software engineer",
 ]
 
 
-def get_locations_for_preference(work_location: str) -> dict:
-    """
-    Returns search locations based on work preference.
-
-    remote  → search globally, no geo filter
-    hybrid  → global for remote + Philadelphia metro for hybrid
-    onsite  → Philadelphia metro only
-    any     → global + Philadelphia metro
-    """
-    if work_location == "remote":
-        return {
-            "remote": REMOTE_LOCATIONS,
-            "local": []
-        }
-    elif work_location == "hybrid":
-        return {
-            "remote": REMOTE_LOCATIONS,
-            "local": PHILADELPHIA_LOCATIONS
-        }
-    elif work_location == "onsite":
-        return {
-            "remote": [],
-            "local": PHILADELPHIA_LOCATIONS
-        }
-    else:  # any
-        return {
-            "remote": REMOTE_LOCATIONS,
-            "local": PHILADELPHIA_LOCATIONS
-        }
+def make_job_id(title: str, company: str, source: str) -> str:
+    """Generate a stable unique ID from job fields"""
+    raw = f"{source}_{title}_{company}".lower().replace(" ", "_")
+    return hashlib.md5(raw.encode()).hexdigest()[:16]
 
 
-def search_jobs(query: str, location: str, is_remote: bool = False) -> list:
-    """Search JSearch API for jobs matching a query and location"""
-
-    params = {
-        "query": f"{query} in {location}",
-        "page": "1",
-        "num_pages": "1",
-        "date_posted": "month",
-        "employment_types": "FULLTIME,INTERN,PARTTIME",
-        "job_requirements": "no_experience,under_3_years_experience"
-    }
-
-    if is_remote:
-        params["remote_jobs_only"] = "true"
-
-    try:
-        response = requests.get(JSEARCH_URL, headers=HEADERS, params=params, timeout=15)
-        data = response.json()
-
-        if data.get("status") == "OK":
-            jobs = data.get("data", [])
-            print(f"  Found {len(jobs)} jobs for '{query}' in {location}")
-            return jobs
-        else:
-            print(f"  API error for '{query}': {data.get('message', 'Unknown')}")
-            return []
-
-    except Exception as e:
-        print(f"  Request failed: {e}")
-        return []
-
-
-def normalize_job(raw_job: dict, is_local: bool = False) -> dict:
-    """Convert JSearch raw job to our clean format"""
-    city = raw_job.get("job_city") or ""
-    state = raw_job.get("job_state") or ""
-    location = f"{city}, {state}".strip(", ")
-
-    return {
-        "id": raw_job.get("job_id", ""),
-        "title": raw_job.get("job_title", ""),
-        "company": raw_job.get("employer_name", ""),
-        "location": location,
-        "country": raw_job.get("job_country", ""),
-        "is_remote": raw_job.get("job_is_remote", False),
-        "is_local": is_local,
-        "description": raw_job.get("job_description", ""),
-        "apply_url": raw_job.get("job_apply_link", ""),
-        "posted_date": raw_job.get("job_posted_at_datetime_utc", ""),
-        "employment_type": raw_job.get("job_employment_type", ""),
-        "apply_platform": detect_platform(raw_job.get("job_apply_link", "")),
-        "is_easy_apply": raw_job.get("job_apply_is_direct", False),
-        "employer_logo": raw_job.get("employer_logo", ""),
-        "salary_min": raw_job.get("job_min_salary"),
-        "salary_max": raw_job.get("job_max_salary"),
-        "highlights": {
-            "qualifications": raw_job.get("job_highlights", {}).get("Qualifications", []),
-            "responsibilities": raw_job.get("job_highlights", {}).get("Responsibilities", []),
-            "benefits": raw_job.get("job_highlights", {}).get("Benefits", [])
-        }
-    }
-
-
-def detect_platform(apply_url: str) -> str:
-    """Detect which platform the job is on for auto-apply routing"""
-    if not apply_url:
+def detect_platform(url: str) -> str:
+    if not url:
         return "unknown"
-    url = apply_url.lower()
+    url = url.lower()
     if "greenhouse.io" in url or "boards.greenhouse" in url:
         return "greenhouse"
     elif "lever.co" in url:
@@ -166,12 +47,224 @@ def detect_platform(apply_url: str) -> str:
         return "indeed"
     elif "workday.com" in url or "myworkday" in url:
         return "workday"
-    elif "taleo" in url:
-        return "taleo"
-    elif "icims" in url:
-        return "icims"
     else:
         return "direct"
+
+
+# ─────────────────────────────────────────────
+# SOURCE 1: Remotive (free, no key, remote only)
+# ─────────────────────────────────────────────
+def fetch_remotive_jobs() -> list:
+    """Fetch remote tech jobs from Remotive API"""
+    print("  [Remotive] Fetching remote tech jobs...")
+    jobs = []
+    categories = ["software-dev", "data", "qa"]
+
+    for category in categories:
+        try:
+            url = f"https://remotive.com/api/remote-jobs?category={category}&limit=50"
+            response = requests.get(url, timeout=15)
+            data = response.json()
+
+            for job in data.get("jobs", []):
+                title = job.get("title", "")
+                # filter for ML/AI roles
+                title_lower = title.lower()
+                if not any(kw in title_lower for kw in [
+                    "machine learning", "ml ", "ai ", "artificial intelligence",
+                    "data science", "data scientist", "nlp", "computer vision",
+                    "deep learning", "llm", "generative", "neural"
+                ]):
+                    continue
+
+                company = job.get("company_name", "")
+                jobs.append({
+                    "id": make_job_id(title, company, "remotive"),
+                    "title": title,
+                    "company": company,
+                    "location": "Remote",
+                    "country": "Worldwide",
+                    "is_remote": True,
+                    "is_local": False,
+                    "description": job.get("description", "")[:3000],
+                    "apply_url": job.get("url", ""),
+                    "posted_date": job.get("publication_date", ""),
+                    "employment_type": job.get("job_type", ""),
+                    "apply_platform": detect_platform(job.get("url", "")),
+                    "employer_logo": job.get("company_logo", ""),
+                    "salary_min": None,
+                    "salary_max": None,
+                    "source": "remotive"
+                })
+        except Exception as e:
+            print(f"  [Remotive] Error: {e}")
+
+    print(f"  [Remotive] Found {len(jobs)} ML/AI jobs")
+    return jobs
+
+
+# ─────────────────────────────────────────────
+# SOURCE 2: Arbeitnow (free, no key, remote+hybrid)
+# ─────────────────────────────────────────────
+def fetch_arbeitnow_jobs() -> list:
+    """Fetch remote/hybrid tech jobs from Arbeitnow"""
+    print("  [Arbeitnow] Fetching remote+hybrid tech jobs...")
+    jobs = []
+
+    try:
+        url = "https://www.arbeitnow.com/api/job-board-api"
+        response = requests.get(url, timeout=15)
+        data = response.json()
+
+        for job in data.get("data", []):
+            title = job.get("title", "")
+            title_lower = title.lower()
+
+            # filter for ML/AI/data roles
+            if not any(kw in title_lower for kw in [
+                "machine learning", "ml ", " ml", "ai ", " ai", "artificial intelligence",
+                "data science", "data scientist", "nlp", "computer vision",
+                "deep learning", "llm", "generative", "neural", "python developer",
+                "software engineer", "backend engineer"
+            ]):
+                continue
+
+            company = job.get("company_name", "")
+            is_remote = job.get("remote", False)
+            location = job.get("location", "")
+
+            jobs.append({
+                "id": make_job_id(title, company, "arbeitnow"),
+                "title": title,
+                "company": company,
+                "location": location if location else ("Remote" if is_remote else ""),
+                "country": "US/EU",
+                "is_remote": is_remote,
+                "is_local": False,
+                "description": job.get("description", "")[:3000],
+                "apply_url": job.get("url", ""),
+                "posted_date": str(job.get("created_at", "")),
+                "employment_type": "",
+                "apply_platform": detect_platform(job.get("url", "")),
+                "employer_logo": "",
+                "salary_min": None,
+                "salary_max": None,
+                "source": "arbeitnow"
+            })
+
+    except Exception as e:
+        print(f"  [Arbeitnow] Error: {e}")
+
+    print(f"  [Arbeitnow] Found {len(jobs)} ML/AI/tech jobs")
+    return jobs
+
+
+# ─────────────────────────────────────────────
+# SOURCE 3: Adzuna (250 free/month, remote+onsite)
+# ─────────────────────────────────────────────
+def fetch_adzuna_jobs(work_location: str = "remote") -> list:
+    """Fetch jobs from Adzuna API"""
+    if not ADZUNA_APP_ID or not ADZUNA_APP_KEY:
+        print("  [Adzuna] No API key, skipping")
+        return []
+
+    print("  [Adzuna] Fetching jobs...")
+    jobs = []
+    queries_to_run = ML_QUERIES[:6]  # limit to save monthly quota
+
+    for query in queries_to_run:
+        try:
+            params = {
+                "app_id": ADZUNA_APP_ID,
+                "app_key": ADZUNA_APP_KEY,
+                "results_per_page": 10,
+                "what": query,
+                "content-type": "application/json",
+            }
+
+            if work_location in ["remote", "hybrid"]:
+                params["what"] = f"{query} remote"
+            else:
+                params["where"] = "Philadelphia"
+                params["distance"] = "40"
+
+            url = "https://api.adzuna.com/v1/api/jobs/us/search/1"
+            response = requests.get(url, params=params, timeout=15)
+            data = response.json()
+
+            for job in data.get("results", []):
+                title = job.get("title", "")
+                company = job.get("company", {}).get("display_name", "")
+                location_data = job.get("location", {})
+                location = ", ".join(location_data.get("area", [])[-2:])
+
+                jobs.append({
+                    "id": make_job_id(title, company, "adzuna"),
+                    "title": title,
+                    "company": company,
+                    "location": location,
+                    "country": "US",
+                    "is_remote": "remote" in (job.get("description") or "").lower()[:500],
+                    "is_local": work_location == "onsite",
+                    "description": job.get("description", "")[:3000],
+                    "apply_url": job.get("redirect_url", ""),
+                    "posted_date": job.get("created", ""),
+                    "employment_type": job.get("contract_time", ""),
+                    "apply_platform": detect_platform(job.get("redirect_url", "")),
+                    "employer_logo": "",
+                    "salary_min": job.get("salary_min"),
+                    "salary_max": job.get("salary_max"),
+                    "source": "adzuna"
+                })
+
+        except Exception as e:
+            print(f"  [Adzuna] Error for '{query}': {e}")
+
+    print(f"  [Adzuna] Found {len(jobs)} jobs")
+    return jobs
+
+
+# ─────────────────────────────────────────────
+# SOURCE 4: HiringCafe (free, no key)
+# ─────────────────────────────────────────────
+def fetch_hiringcafe_jobs() -> list:
+    """Fetch from HiringCafe free API"""
+    print("  [HiringCafe] Fetching ML/AI jobs...")
+    jobs = []
+
+    try:
+        url = "https://hiring.cafe/api/jobs"
+        params = {"q": "machine learning engineer", "remote": "true"}
+        response = requests.get(url, params=params, timeout=15)
+
+        if response.status_code == 200:
+            data = response.json()
+            for job in data.get("jobs", [])[:30]:
+                title = job.get("title", "")
+                company = job.get("company", "")
+                jobs.append({
+                    "id": make_job_id(title, company, "hiringcafe"),
+                    "title": title,
+                    "company": company,
+                    "location": job.get("location", "Remote"),
+                    "country": "US",
+                    "is_remote": True,
+                    "is_local": False,
+                    "description": job.get("description", "")[:3000],
+                    "apply_url": job.get("apply_url", ""),
+                    "posted_date": "",
+                    "employment_type": "",
+                    "apply_platform": detect_platform(job.get("apply_url", "")),
+                    "employer_logo": "",
+                    "salary_min": None,
+                    "salary_max": None,
+                    "source": "hiringcafe"
+                })
+    except Exception as e:
+        print(f"  [HiringCafe] Error or unavailable: {e}")
+
+    print(f"  [HiringCafe] Found {len(jobs)} jobs")
+    return jobs
 
 
 def deduplicate_jobs(jobs: list) -> list:
@@ -182,9 +275,9 @@ def deduplicate_jobs(jobs: list) -> list:
 
     for job in jobs:
         job_id = job.get("id", "")
-        combo = f"{job.get('title','').lower()}_{job.get('company','').lower()}"
+        combo = f"{job.get('title','').lower()[:40]}_{job.get('company','').lower()[:30]}"
 
-        if job_id and job_id in seen_ids:
+        if job_id in seen_ids:
             continue
         if combo in seen_combos:
             continue
@@ -196,103 +289,56 @@ def deduplicate_jobs(jobs: list) -> list:
     return unique
 
 
+def filter_by_location(jobs: list, work_location: str) -> list:
+    """Filter jobs based on work location preference"""
+    if work_location == "remote":
+        return [j for j in jobs if j.get("is_remote")]
+    elif work_location == "hybrid":
+        return [j for j in jobs if j.get("is_remote") or
+                "hybrid" in (j.get("location") or "").lower() or
+                "hybrid" in (j.get("title") or "").lower()]
+    elif work_location == "onsite":
+        return [j for j in jobs if not j.get("is_remote")]
+    else:  # any
+        return jobs
+
+
 def find_all_jobs(max_jobs: int = 100, work_location: str = "remote") -> list:
     """
-    Main function — searches based on work location preference.
-
-    Remote only  → searches globally, returns remote jobs
-    Hybrid       → global remote + Philadelphia metro hybrid/onsite
-    Onsite       → Philadelphia metro only
-    Any          → everything
+    Main function — fetches jobs from all free sources.
+    Filters by work location preference.
     """
     print(f"\nStarting job discovery...")
     print(f"Work preference: {work_location.upper()}")
     print(f"Max jobs: {max_jobs}")
-    print(f"Search queries: {len(SEARCH_QUERIES)}\n")
+    print(f"Sources: Remotive, Arbeitnow, Adzuna, HiringCafe\n")
 
-    locations = get_locations_for_preference(work_location)
-    remote_locs = locations["remote"]
-    local_locs = locations["local"]
+    all_jobs = []
 
-    if local_locs:
-        print(f"Local search area: Philadelphia metro ({len(local_locs)} locations)")
-    if remote_locs:
-        print(f"Remote search: Global ({len(remote_locs)} location types)\n")
+    all_jobs.extend(fetch_remotive_jobs())
+    all_jobs.extend(fetch_arbeitnow_jobs())
+    all_jobs.extend(fetch_adzuna_jobs(work_location))
+    all_jobs.extend(fetch_hiringcafe_jobs())
 
-    all_raw_jobs = []
+    print(f"\nRaw jobs from all sources: {len(all_jobs)}")
 
-    # search remote/global locations
-    if remote_locs:
-        print("--- Remote/Global Search ---")
-        for query in SEARCH_QUERIES:
-            for location in remote_locs:
-                jobs = search_jobs(query, location, is_remote=True)
-                all_raw_jobs.extend([(j, False) for j in jobs])
-                if len(all_raw_jobs) >= max_jobs * 3:
-                    break
-            if len(all_raw_jobs) >= max_jobs * 3:
-                break
-
-    # search local Philadelphia metro locations
-    if local_locs:
-        print("\n--- Philadelphia Metro Search ---")
-        for query in SEARCH_QUERIES:
-            # only search a subset of local locations to save API calls
-            for location in local_locs[:5]:
-                jobs = search_jobs(query, location, is_remote=False)
-                all_raw_jobs.extend([(j, True) for j in jobs])
-                if len(all_raw_jobs) >= max_jobs * 3:
-                    break
-            if len(all_raw_jobs) >= max_jobs * 3:
-                break
-
-    print(f"\nRaw jobs found: {len(all_raw_jobs)}")
-
-    # normalize all jobs
-    normalized = []
-    for raw_job, is_local in all_raw_jobs:
-        try:
-            normalized.append(normalize_job(raw_job, is_local=is_local))
-        except Exception as e:
-            continue
-
-    # deduplicate
-    unique_jobs = deduplicate_jobs(normalized)
+    unique_jobs = deduplicate_jobs(all_jobs)
     print(f"After deduplication: {len(unique_jobs)} unique jobs")
 
-    # limit to max
-    final_jobs = unique_jobs[:max_jobs]
-    print(f"Final job list: {len(final_jobs)} jobs ready for scoring\n")
+    filtered = filter_by_location(unique_jobs, work_location)
+    print(f"After location filter ({work_location}): {len(filtered)} jobs")
 
-    return final_jobs
+    final = filtered[:max_jobs]
+    print(f"Final job list: {len(final)} jobs ready for scoring\n")
 
-
-def get_platform_breakdown(jobs: list) -> dict:
-    """Show how many jobs per platform"""
-    breakdown = {}
-    for job in jobs:
-        platform = job.get("apply_platform", "unknown")
-        breakdown[platform] = breakdown.get(platform, 0) + 1
-    return breakdown
+    return final
 
 
 if __name__ == "__main__":
-    # test with remote only (default)
-    print("=== TEST: Remote Only ===")
-    jobs = find_all_jobs(max_jobs=10, work_location="remote")
-
-    print("\n--- PLATFORM BREAKDOWN ---")
-    breakdown = get_platform_breakdown(jobs)
-    for platform, count in sorted(breakdown.items(), key=lambda x: x[1], reverse=True):
-        auto = platform in ["greenhouse", "lever", "linkedin", "indeed"]
-        print(f"  {platform}: {count} [{'AUTO' if auto else 'manual'}]")
-
-    print(f"\nTotal: {len(jobs)} jobs")
-
-    print("\n--- SAMPLE JOBS ---")
+    jobs = find_all_jobs(max_jobs=20, work_location="remote")
+    print(f"\n--- SAMPLE JOBS ---")
     for job in jobs[:5]:
-        local_tag = "📍 LOCAL" if job.get("is_local") else "🌐 Remote"
-        print(f"  {local_tag} | {job['title']} at {job['company']}")
-        print(f"  Location: {job['location']}")
+        print(f"  [{job['source']}] {job['title']} at {job['company']}")
+        print(f"  Location: {job['location']} | Remote: {job['is_remote']}")
         print(f"  Platform: {job['apply_platform']}")
         print()

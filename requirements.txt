@@ -15,8 +15,8 @@ reportlab
 # Browser Automation (for Workday etc)
 playwright
 
-# Database
-# sqlite3 is in the Python standard library — no pip package needed
+# Database (SQLite built-in; PostgreSQL when DATABASE_URL is set)
+psycopg2-binary
 
 # Dashboard
 streamlit
