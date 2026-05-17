@@ -1,4 +1,5 @@
 import html
+import json
 import streamlit as st
 import sys
 import re
@@ -13,7 +14,8 @@ load_dotenv(ROOT / ".env")
 from core.tracker import (
     init_database, get_stats, get_jobs, get_applications,
     get_pending_follow_ups, get_setting, save_setting,
-    update_application_status, already_applied, get_connection
+    update_application_status, already_applied, mark_follow_up_sent,
+    get_documents
 )
 
 st.set_page_config(
@@ -457,7 +459,7 @@ for col, label, val, color in items:
 st.markdown("<div style='height:20px'></div>", unsafe_allow_html=True)
 
 # ── TABS ────────────────────────────────────────────────────
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["✦ Jobs", "📋 Applications", "⏰ Follow-ups", "🗂 Projects", "⚙ Settings"])
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["✦ Jobs", "📋 Applications", "⏰ Follow-ups", "📁 Documents", "🗂 Projects", "⚙ Settings"])
 
 # ── TAB 1: JOBS ─────────────────────────────────────────────
 with tab1:
@@ -556,14 +558,118 @@ with tab3:
                     st.info("Follow-up generation coming soon.")
             with col2:
                 if st.button(f"Mark Done", key=f"done_{fu['id']}"):
-                    conn = get_connection()
-                    conn.execute("UPDATE follow_ups SET sent=1 WHERE id=?", (fu["id"],))
-                    conn.commit()
-                    conn.close()
+                    mark_follow_up_sent(fu["id"])
                     st.rerun()
 
-# ── TAB 4: PROJECTS ─────────────────────────────────────────
+# ── TAB 4: DOCUMENTS ────────────────────────────────────────
 with tab4:
+    st.markdown('<div style="font-size:18px;font-weight:700;color:#D4AF37;margin-bottom:8px;">📁 Documents</div>', unsafe_allow_html=True)
+    st.markdown('<div style="font-size:13px;color:rgba(240,234,214,0.5);margin-bottom:20px;">Tailored resume + cover letter for each job. Download and use to apply.</div>', unsafe_allow_html=True)
+
+    from core.tracker import get_documents
+    from core.resume_builder import build_resume_pdf
+
+    docs = get_documents(min_score=int(get_setting("min_match_score") or 60), limit=50)
+
+    if not docs:
+        st.markdown("""
+        <div style="text-align:center;padding:60px 20px;">
+            <div style="font-size:40px;color:rgba(212,175,55,0.3);margin-bottom:16px;">📁</div>
+            <div style="font-size:18px;font-weight:700;color:#F0EAD6;margin-bottom:8px;">No documents yet</div>
+            <div style="font-size:14px;color:rgba(240,234,214,0.45);">Run "Find & Score Jobs" to generate tailored resumes and cover letters</div>
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        auto_platforms = ["greenhouse", "lever"]
+        hit_platforms = ["linkedin"]
+
+        for doc in docs:
+            platform = doc.get("apply_platform", "direct")
+            score = doc.get("match_score", 0)
+            title = doc.get("title", "")
+            company = doc.get("company", "")
+            apply_url = doc.get("apply_url", "")
+            cover_letter_text = doc.get("cover_letter_text", "")
+            job_id = doc.get("id", "")
+
+            if platform in auto_platforms:
+                tier_color = "#34D399"
+                tier_label = "✅ AUTO-APPLY"
+            elif platform in hit_platforms:
+                tier_color = "#F5D060"
+                tier_label = "👆 HIT APPLY"
+            else:
+                tier_color = "#A78BFA"
+                tier_label = "✍️ MANUAL"
+
+            st.markdown(f"""
+            <div style="background:#221550;border:1px solid rgba(212,175,55,0.15);border-radius:12px;padding:16px 18px;margin-bottom:6px;">
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+                    <div>
+                        <div style="font-size:15px;font-weight:700;color:#F0EAD6;">{title}</div>
+                        <div style="font-size:13px;color:rgba(240,234,214,0.6);margin-top:2px;">{company}</div>
+                    </div>
+                    <div style="display:flex;gap:8px;align-items:center;">
+                        <span style="background:rgba(212,175,55,0.15);color:#D4AF37;font-size:12px;font-weight:700;padding:3px 10px;border-radius:20px;">{score}%</span>
+                        <span style="background:rgba(0,0,0,0.3);color:{tier_color};font-size:11px;font-weight:700;padding:3px 10px;border-radius:20px;">{tier_label}</span>
+                    </div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+            col1, col2, col3 = st.columns(3)
+
+            with col1:
+                if cover_letter_text:
+                    st.download_button(
+                        label="📝 Cover Letter",
+                        data=cover_letter_text.encode("utf-8"),
+                        file_name=f"cover_letter_{company.replace(' ','_')}_{title.replace(' ','_')[:20]}.txt",
+                        mime="text/plain",
+                        key=f"cl_{job_id}",
+                        use_container_width=True
+                    )
+                else:
+                    st.button("📝 No Cover Letter", disabled=True, key=f"cl_none_{job_id}", use_container_width=True)
+
+            with col2:
+                if st.button("📄 Download Resume", key=f"resume_{job_id}", use_container_width=True):
+                    try:
+                        from core.resume_parser import get_candidate_profile as _gcp
+                        _profile = _gcp()
+                        _scored = {
+                            "job_title": title,
+                            "company": company,
+                            "best_projects": json.loads(doc.get("best_projects") or "[]"),
+                            "match_score": score,
+                        }
+                        pdf_path = build_resume_pdf(_scored, _profile)
+                        with open(pdf_path, "rb") as f:
+                            pdf_bytes = f.read()
+                        st.download_button(
+                            label="⬇️ Save PDF",
+                            data=pdf_bytes,
+                            file_name=f"resume_{company.replace(' ','_')}_{title.replace(' ','_')[:20]}.pdf",
+                            mime="application/pdf",
+                            key=f"pdf_dl_{job_id}",
+                            use_container_width=True
+                        )
+                    except Exception as e:
+                        st.error(f"Error: {e}")
+
+            with col3:
+                if apply_url:
+                    st.markdown(f"""
+                    <a href="{apply_url}" target="_blank" style="display:block;text-align:center;
+                    padding:8px;background:linear-gradient(135deg,#D4AF37,#F5D060);
+                    color:#1A1040;font-weight:700;font-size:13px;border-radius:8px;
+                    text-decoration:none;margin-top:1px;">🔗 Open Job</a>
+                    """, unsafe_allow_html=True)
+
+            st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
+
+# ── TAB 5: PROJECTS ─────────────────────────────────────────
+with tab5:
     st.markdown('<div style="font-size:18px;font-weight:700;color:#D4AF37;margin-bottom:16px;">Project Bank</div>', unsafe_allow_html=True)
 
     try:
@@ -607,8 +713,8 @@ with tab4:
     except Exception as e:
         st.error(f"Error loading projects: {e}")
 
-# ── TAB 5: SETTINGS ─────────────────────────────────────────
-with tab5:
+# ── TAB 6: SETTINGS ─────────────────────────────────────────
+with tab6:
     st.markdown('<div style="font-size:18px;font-weight:700;color:#D4AF37;margin-bottom:20px;">Agent Settings</div>', unsafe_allow_html=True)
 
     col1, col2 = st.columns(2)

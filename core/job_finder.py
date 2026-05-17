@@ -6,11 +6,9 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Adzuna API (250 free/month, needs key)
 ADZUNA_APP_ID = os.getenv("ADZUNA_APP_ID", "")
 ADZUNA_APP_KEY = os.getenv("ADZUNA_APP_KEY", "")
 
-# Search queries tailored to Rakib's profile
 ML_QUERIES = [
     "machine learning engineer",
     "AI engineer",
@@ -28,7 +26,6 @@ ML_QUERIES = [
 
 
 def make_job_id(title: str, company: str, source: str) -> str:
-    """Generate a stable unique ID from job fields"""
     raw = f"{source}_{title}_{company}".lower().replace(" ", "_")
     return hashlib.md5(raw.encode()).hexdigest()[:16]
 
@@ -52,10 +49,144 @@ def detect_platform(url: str) -> str:
 
 
 # ─────────────────────────────────────────────
-# SOURCE 1: Remotive (free, no key, remote only)
+# SOURCE 1: LinkedIn (Greenhouse/Lever apply links)
+# ─────────────────────────────────────────────
+def fetch_linkedin_jobs(work_location: str = "remote") -> list:
+    """
+    Fetch ML/AI jobs from LinkedIn public job search.
+    LinkedIn listings often embed Greenhouse/Lever apply URLs → enables auto-apply.
+    """
+    print("  [LinkedIn] Fetching ML/AI jobs...")
+    jobs = []
+
+    queries = [
+        "machine learning engineer intern",
+        "AI engineer intern",
+        "ML engineer entry level",
+        "NLP engineer intern",
+        "generative AI engineer",
+        "LLM engineer intern",
+        "data scientist intern",
+        "computer vision engineer intern",
+    ]
+
+    location_param = "United States"
+    remote_filter = ""
+    if work_location in ["remote", "hybrid"]:
+        remote_filter = "&f_WT=2"  # LinkedIn remote filter
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
+    }
+
+    for query in queries[:5]:  # limit to save time
+        try:
+            url = (
+                f"https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
+                f"?keywords={requests.utils.quote(query)}"
+                f"&location={requests.utils.quote(location_param)}"
+                f"{remote_filter}&start=0&count=10"
+            )
+            response = requests.get(url, headers=headers, timeout=15)
+
+            if response.status_code != 200:
+                continue
+
+            from html.parser import HTMLParser
+
+            class LinkedInParser(HTMLParser):
+                def __init__(self):
+                    super().__init__()
+                    self.jobs = []
+                    self.current_job = {}
+                    self.in_title = False
+                    self.in_company = False
+                    self.in_location = False
+
+                def handle_starttag(self, tag, attrs):
+                    attrs_dict = dict(attrs)
+                    classes = attrs_dict.get("class", "")
+
+                    if "base-card__full-link" in classes or "job-search-card__link-absolute" in classes:
+                        href = attrs_dict.get("href", "")
+                        if href and "linkedin.com/jobs/view" in href:
+                            self.current_job["apply_url"] = href.split("?")[0]
+
+                    if "base-search-card__title" in classes or "job-search-card__title" in classes:
+                        self.in_title = True
+
+                    if "base-search-card__subtitle" in classes or "job-search-card__subtitle" in classes:
+                        self.in_company = True
+
+                    if "job-search-card__location" in classes:
+                        self.in_location = True
+
+                def handle_data(self, data):
+                    data = data.strip()
+                    if not data:
+                        return
+                    if self.in_title:
+                        self.current_job["title"] = data
+                        self.in_title = False
+                    elif self.in_company:
+                        self.current_job["company"] = data
+                        self.in_company = False
+                    elif self.in_location:
+                        self.current_job["location"] = data
+                        self.in_location = False
+
+                    if ("title" in self.current_job and
+                        "company" in self.current_job and
+                        "apply_url" in self.current_job and
+                        self.current_job not in self.jobs):
+                        self.jobs.append(dict(self.current_job))
+
+            parser = LinkedInParser()
+            parser.feed(response.text)
+
+            for raw in parser.jobs:
+                title = raw.get("title", "")
+                company = raw.get("company", "")
+                location = raw.get("location", "")
+                apply_url = raw.get("apply_url", "")
+
+                if not title or not company:
+                    continue
+
+                is_remote = any(w in location.lower() for w in ["remote", "anywhere"])
+
+                jobs.append({
+                    "id": make_job_id(title, company, "linkedin"),
+                    "title": title,
+                    "company": company,
+                    "location": location,
+                    "country": "US",
+                    "is_remote": is_remote,
+                    "is_local": False,
+                    "description": f"{title} at {company} — {location}",
+                    "apply_url": apply_url,
+                    "posted_date": "",
+                    "employment_type": "",
+                    "apply_platform": "linkedin",
+                    "employer_logo": "",
+                    "salary_min": None,
+                    "salary_max": None,
+                    "source": "linkedin"
+                })
+
+        except Exception as e:
+            print(f"  [LinkedIn] Error for '{query}': {e}")
+
+    print(f"  [LinkedIn] Found {len(jobs)} jobs")
+    return jobs
+
+
+# ─────────────────────────────────────────────
+# SOURCE 2: Remotive (free, no key, remote only)
 # ─────────────────────────────────────────────
 def fetch_remotive_jobs() -> list:
-    """Fetch remote tech jobs from Remotive API"""
     print("  [Remotive] Fetching remote tech jobs...")
     jobs = []
     categories = ["software-dev", "data", "qa"]
@@ -68,7 +199,6 @@ def fetch_remotive_jobs() -> list:
 
             for job in data.get("jobs", []):
                 title = job.get("title", "")
-                # filter for ML/AI roles
                 title_lower = title.lower()
                 if not any(kw in title_lower for kw in [
                     "machine learning", "ml ", "ai ", "artificial intelligence",
@@ -78,6 +208,7 @@ def fetch_remotive_jobs() -> list:
                     continue
 
                 company = job.get("company_name", "")
+                apply_url = job.get("url", "")
                 jobs.append({
                     "id": make_job_id(title, company, "remotive"),
                     "title": title,
@@ -87,10 +218,10 @@ def fetch_remotive_jobs() -> list:
                     "is_remote": True,
                     "is_local": False,
                     "description": job.get("description", "")[:3000],
-                    "apply_url": job.get("url", ""),
+                    "apply_url": apply_url,
                     "posted_date": job.get("publication_date", ""),
                     "employment_type": job.get("job_type", ""),
-                    "apply_platform": detect_platform(job.get("url", "")),
+                    "apply_platform": detect_platform(apply_url),
                     "employer_logo": job.get("company_logo", ""),
                     "salary_min": None,
                     "salary_max": None,
@@ -104,10 +235,9 @@ def fetch_remotive_jobs() -> list:
 
 
 # ─────────────────────────────────────────────
-# SOURCE 2: Arbeitnow (free, no key, remote+hybrid)
+# SOURCE 3: Arbeitnow (free, no key, remote+hybrid)
 # ─────────────────────────────────────────────
 def fetch_arbeitnow_jobs() -> list:
-    """Fetch remote/hybrid tech jobs from Arbeitnow"""
     print("  [Arbeitnow] Fetching remote+hybrid tech jobs...")
     jobs = []
 
@@ -120,7 +250,6 @@ def fetch_arbeitnow_jobs() -> list:
             title = job.get("title", "")
             title_lower = title.lower()
 
-            # filter for ML/AI/data roles
             if not any(kw in title_lower for kw in [
                 "machine learning", "ml ", " ml", "ai ", " ai", "artificial intelligence",
                 "data science", "data scientist", "nlp", "computer vision",
@@ -132,6 +261,7 @@ def fetch_arbeitnow_jobs() -> list:
             company = job.get("company_name", "")
             is_remote = job.get("remote", False)
             location = job.get("location", "")
+            apply_url = job.get("url", "")
 
             jobs.append({
                 "id": make_job_id(title, company, "arbeitnow"),
@@ -142,10 +272,10 @@ def fetch_arbeitnow_jobs() -> list:
                 "is_remote": is_remote,
                 "is_local": False,
                 "description": job.get("description", "")[:3000],
-                "apply_url": job.get("url", ""),
+                "apply_url": apply_url,
                 "posted_date": str(job.get("created_at", "")),
                 "employment_type": "",
-                "apply_platform": detect_platform(job.get("url", "")),
+                "apply_platform": detect_platform(apply_url),
                 "employer_logo": "",
                 "salary_min": None,
                 "salary_max": None,
@@ -160,31 +290,26 @@ def fetch_arbeitnow_jobs() -> list:
 
 
 # ─────────────────────────────────────────────
-# SOURCE 3: Adzuna (250 free/month, remote+onsite)
+# SOURCE 4: Adzuna (250 free/month)
 # ─────────────────────────────────────────────
 def fetch_adzuna_jobs(work_location: str = "remote") -> list:
-    """Fetch jobs from Adzuna API"""
     if not ADZUNA_APP_ID or not ADZUNA_APP_KEY:
         print("  [Adzuna] No API key, skipping")
         return []
 
     print("  [Adzuna] Fetching jobs...")
     jobs = []
-    queries_to_run = ML_QUERIES[:6]  # limit to save monthly quota
 
-    for query in queries_to_run:
+    for query in ML_QUERIES[:6]:
         try:
             params = {
                 "app_id": ADZUNA_APP_ID,
                 "app_key": ADZUNA_APP_KEY,
                 "results_per_page": 10,
-                "what": query,
+                "what": f"{query} remote" if work_location in ["remote", "hybrid"] else query,
                 "content-type": "application/json",
             }
-
-            if work_location in ["remote", "hybrid"]:
-                params["what"] = f"{query} remote"
-            else:
+            if work_location == "onsite":
                 params["where"] = "Philadelphia"
                 params["distance"] = "40"
 
@@ -197,6 +322,7 @@ def fetch_adzuna_jobs(work_location: str = "remote") -> list:
                 company = job.get("company", {}).get("display_name", "")
                 location_data = job.get("location", {})
                 location = ", ".join(location_data.get("area", [])[-2:])
+                apply_url = job.get("redirect_url", "")
 
                 jobs.append({
                     "id": make_job_id(title, company, "adzuna"),
@@ -207,10 +333,10 @@ def fetch_adzuna_jobs(work_location: str = "remote") -> list:
                     "is_remote": "remote" in (job.get("description") or "").lower()[:500],
                     "is_local": work_location == "onsite",
                     "description": job.get("description", "")[:3000],
-                    "apply_url": job.get("redirect_url", ""),
+                    "apply_url": apply_url,
                     "posted_date": job.get("created", ""),
                     "employment_type": job.get("contract_time", ""),
-                    "apply_platform": detect_platform(job.get("redirect_url", "")),
+                    "apply_platform": detect_platform(apply_url),
                     "employer_logo": "",
                     "salary_min": job.get("salary_min"),
                     "salary_max": job.get("salary_max"),
@@ -225,10 +351,9 @@ def fetch_adzuna_jobs(work_location: str = "remote") -> list:
 
 
 # ─────────────────────────────────────────────
-# SOURCE 4: HiringCafe (free, no key)
+# SOURCE 5: HiringCafe (free, no key)
 # ─────────────────────────────────────────────
 def fetch_hiringcafe_jobs() -> list:
-    """Fetch from HiringCafe free API"""
     print("  [HiringCafe] Fetching ML/AI jobs...")
     jobs = []
 
@@ -242,6 +367,7 @@ def fetch_hiringcafe_jobs() -> list:
             for job in data.get("jobs", [])[:30]:
                 title = job.get("title", "")
                 company = job.get("company", "")
+                apply_url = job.get("apply_url", "")
                 jobs.append({
                     "id": make_job_id(title, company, "hiringcafe"),
                     "title": title,
@@ -251,10 +377,10 @@ def fetch_hiringcafe_jobs() -> list:
                     "is_remote": True,
                     "is_local": False,
                     "description": job.get("description", "")[:3000],
-                    "apply_url": job.get("apply_url", ""),
+                    "apply_url": apply_url,
                     "posted_date": "",
                     "employment_type": "",
-                    "apply_platform": detect_platform(job.get("apply_url", "")),
+                    "apply_platform": detect_platform(apply_url),
                     "employer_logo": "",
                     "salary_min": None,
                     "salary_max": None,
@@ -268,7 +394,6 @@ def fetch_hiringcafe_jobs() -> list:
 
 
 def deduplicate_jobs(jobs: list) -> list:
-    """Remove duplicate jobs by ID and title+company combo"""
     seen_ids = set()
     seen_combos = set()
     unique = []
@@ -290,11 +415,9 @@ def deduplicate_jobs(jobs: list) -> list:
 
 
 def filter_by_location(jobs: list, work_location: str) -> list:
-    """Filter jobs based on work location preference"""
     if work_location == "remote":
         return [j for j in jobs if j.get("is_remote")]
     elif work_location == "hybrid":
-        # show remote + hybrid + anything without a clear onsite-only signal
         return [j for j in jobs if j.get("is_remote") or
                 "hybrid" in (j.get("location") or "").lower() or
                 "hybrid" in (j.get("title") or "").lower() or
@@ -302,35 +425,28 @@ def filter_by_location(jobs: list, work_location: str) -> list:
                 j.get("location", "").lower() in ["", "worldwide", "remote"]]
     elif work_location == "onsite":
         return [j for j in jobs if not j.get("is_remote")]
-    else:  # any
+    else:
         return jobs
 
 
 def find_all_jobs(max_jobs: int = 100, work_location: str = "remote") -> list:
-    """
-    Main function — fetches jobs from all free sources.
-    Filters by work location preference.
-    """
     print(f"\nStarting job discovery...")
     print(f"Work preference: {work_location.upper()}")
     print(f"Max jobs: {max_jobs}")
-    print(f"Sources: Remotive, Arbeitnow, Adzuna, HiringCafe\n")
+    print(f"Sources: LinkedIn, Remotive, Arbeitnow, Adzuna, HiringCafe\n")
 
     all_jobs = []
-
+    all_jobs.extend(fetch_linkedin_jobs(work_location))
     all_jobs.extend(fetch_remotive_jobs())
     all_jobs.extend(fetch_arbeitnow_jobs())
     all_jobs.extend(fetch_adzuna_jobs(work_location))
     all_jobs.extend(fetch_hiringcafe_jobs())
 
     print(f"\nRaw jobs from all sources: {len(all_jobs)}")
-
     unique_jobs = deduplicate_jobs(all_jobs)
     print(f"After deduplication: {len(unique_jobs)} unique jobs")
-
     filtered = filter_by_location(unique_jobs, work_location)
     print(f"After location filter ({work_location}): {len(filtered)} jobs")
-
     final = filtered[:max_jobs]
     print(f"Final job list: {len(final)} jobs ready for scoring\n")
 

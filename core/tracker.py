@@ -65,6 +65,8 @@ def init_database():
             missing_skills TEXT,
             strengths TEXT,
             priority_flag INTEGER DEFAULT 0,
+            cover_letter_text TEXT,
+            resume_path TEXT,
             date_found TEXT,
             date_applied TEXT,
             status TEXT DEFAULT 'found',
@@ -117,10 +119,20 @@ def init_database():
         )
     """)
 
+    _migrate_jobs_columns(cursor)
     conn.commit()
     _close(conn, cursor)
     save_default_settings()
     print("Database initialized successfully.")
+
+
+def _migrate_jobs_columns(cursor):
+    """Add columns for existing databases."""
+    for col in ("cover_letter_text", "resume_path"):
+        try:
+            cursor.execute(f"ALTER TABLE jobs ADD COLUMN {col} TEXT")
+        except Exception:
+            pass
 
 
 def save_default_settings():
@@ -258,6 +270,48 @@ def save_job(job: dict, scored_data: dict = None):
     _close(conn, cursor)
 
 
+def save_cover_letter(job_id: str, cover_letter_text: str, resume_path: str = None):
+    """Save generated cover letter text and resume path to job record."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    if _use_postgres():
+        cursor.execute(
+            "UPDATE jobs SET cover_letter_text = %s, resume_path = %s WHERE id = %s",
+            (cover_letter_text, resume_path, job_id),
+        )
+    else:
+        cursor.execute(
+            "UPDATE jobs SET cover_letter_text = ?, resume_path = ? WHERE id = ?",
+            (cover_letter_text, resume_path, job_id),
+        )
+    conn.commit()
+    _close(conn, cursor)
+
+
+def get_documents(min_score: int = 70, limit: int = 50) -> list:
+    """Get jobs that have generated cover letters."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    query = """
+        SELECT id, title, company, location, is_remote, apply_url,
+               apply_platform, match_score, priority_flag, status,
+               cover_letter_text, resume_path, date_found,
+               reasoning, best_projects
+        FROM jobs
+        WHERE match_score >= {ph}
+        AND cover_letter_text IS NOT NULL
+        ORDER BY priority_flag DESC, match_score DESC
+        LIMIT {ph}
+    """
+    if _use_postgres():
+        cursor.execute(query.format(ph="%s"), (min_score, limit))
+    else:
+        cursor.execute(query.format(ph="?"), (min_score, limit))
+    rows = cursor.fetchall()
+    _close(conn, cursor)
+    return [dict(row) for row in rows]
+
+
 def save_application(job_id: str, company: str, title: str,
                      platform: str, apply_url: str,
                      cover_letter_path: str = None,
@@ -336,10 +390,17 @@ def update_application_status(application_id: int, status: str,
 def mark_follow_up_sent(follow_up_id: int):
     conn = get_connection()
     cursor = conn.cursor()
+    now = datetime.now().isoformat()
     if _use_postgres():
-        cursor.execute("UPDATE follow_ups SET sent=1 WHERE id=%s", (follow_up_id,))
+        cursor.execute(
+            "UPDATE follow_ups SET sent=1, sent_date=%s WHERE id=%s",
+            (now, follow_up_id),
+        )
     else:
-        cursor.execute("UPDATE follow_ups SET sent=1 WHERE id=?", (follow_up_id,))
+        cursor.execute(
+            "UPDATE follow_ups SET sent=1, sent_date=? WHERE id=?",
+            (now, follow_up_id),
+        )
     conn.commit()
     _close(conn, cursor)
 
