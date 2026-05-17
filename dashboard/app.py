@@ -226,6 +226,20 @@ input[type="number"]:focus {
 
 init_database()
 
+# Wipe corrupted reasoning fields that contain HTML
+try:
+    from core.tracker import get_connection as _gc
+    _c = _gc()
+    _cur = _c.cursor()
+    _cur.execute("UPDATE jobs SET reasoning = '' WHERE reasoning LIKE '<%'")
+    _cur.execute("UPDATE jobs SET reasoning = '' WHERE reasoning LIKE '%<div%'")
+    _cur.execute("UPDATE jobs SET reasoning = '' WHERE reasoning LIKE '%font-size%'")
+    _c.commit()
+    _cur.close()
+    _c.close()
+except Exception:
+    pass
+
 # ── HELPERS ─────────────────────────────────────────────────
 
 def gold_badge(text, style=""):
@@ -265,9 +279,18 @@ def render_job_card(job):
     platform = job.get("apply_platform", "direct")
     is_remote = job.get("is_remote", 0)
     location = "🌐 Remote" if is_remote else f"📍 {job.get('location', '')}"
-    _reasoning_plain = re.sub(r"<[^>]+>", "", job.get("reasoning", "") or "").strip()
+    _raw = job.get("reasoning", "") or ""
+    # strip all HTML tags
+    _reasoning_plain = re.sub(r"<[^>]+>", " ", _raw)
+    # strip HTML entities
+    _reasoning_plain = re.sub(r"&[a-zA-Z0-9#]+;", " ", _reasoning_plain)
+    # collapse whitespace
+    _reasoning_plain = re.sub(r"\s+", " ", _reasoning_plain).strip()
+    # if result still looks like HTML or is junk, hide it
+    if "<" in _reasoning_plain or len(_reasoning_plain) < 10:
+        _reasoning_plain = ""
     reasoning_display = html.escape(
-        _reasoning_plain[:160] + ("..." if len(_reasoning_plain) > 160 else "")
+        _reasoning_plain[:200] + ("..." if len(_reasoning_plain) > 200 else "")
     )
     salary_min = job.get("salary_min")
     salary_max = job.get("salary_max")
@@ -388,8 +411,13 @@ with st.sidebar:
                     work_location=get_setting("work_location") or "remote"
                 )
                 scored = score_all_jobs(jobs, profile, min_score=min_score)
-                for j in scored:
-                    save_job(j, j)
+                # build a lookup of original jobs by id for correct saving
+                jobs_by_id = {job.get("id", ""): job for job in jobs}
+                for scored_job in scored:
+                    original_job = jobs_by_id.get(scored_job.get("job_id", ""), scored_job)
+                    # ensure description doesn't bleed into reasoning
+                    scored_job_clean = {k: v for k, v in scored_job.items()}
+                    save_job(original_job, scored_job_clean)
                 st.success(f"Found {len(scored)} matching jobs!")
                 st.rerun()
             except Exception as e:
