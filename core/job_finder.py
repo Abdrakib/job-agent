@@ -49,6 +49,102 @@ def detect_platform(url: str) -> str:
 
 
 # ─────────────────────────────────────────────
+# SOURCE 0: JSearch via RapidAPI
+# ─────────────────────────────────────────────
+RAPIDAPI_KEY = os.getenv("RAPIDAPI_KEY", "")
+JSEARCH_URL = "https://jsearch.p.rapidapi.com/search"
+JSEARCH_HEADERS = {
+    "X-RapidAPI-Key": RAPIDAPI_KEY,
+    "X-RapidAPI-Host": "jsearch.p.rapidapi.com"
+}
+
+JSEARCH_QUERIES = [
+    "ML Engineer intern remote",
+    "AI Engineer intern remote",
+    "machine learning internship remote",
+    "generative AI engineer entry level",
+    "NLP engineer intern remote",
+    "computer vision engineer intern",
+    "deep learning engineer intern",
+    "LLM engineer entry level",
+    "data scientist intern remote",
+    "applied machine learning intern",
+    "AI research intern remote",
+    "junior ML engineer remote",
+    "generative AI intern",
+    "AI software engineer intern",
+]
+
+JSEARCH_LOCATIONS = [
+    "United States",
+    "Remote",
+    "Philadelphia Pennsylvania",
+]
+
+
+def fetch_jsearch_jobs() -> list:
+    """Fetch from JSearch — full queries on paid plan"""
+    if not RAPIDAPI_KEY:
+        print("  [JSearch] No API key, skipping")
+        return []
+
+    print(f"  [JSearch] Fetching jobs ({len(JSEARCH_QUERIES)} queries)...")
+    jobs = []
+
+    for query in JSEARCH_QUERIES:
+        try:
+            for location in JSEARCH_LOCATIONS[:2]:
+                params = {
+                    "query": f"{query} in {location}",
+                    "page": "1",
+                    "num_pages": "1",
+                    "date_posted": "month",
+                    "employment_types": "FULLTIME,INTERN",
+                    "job_requirements": "no_experience,under_3_years_experience"
+                }
+                response = requests.get(
+                    JSEARCH_URL, headers=JSEARCH_HEADERS, params=params, timeout=15
+                )
+                data = response.json()
+
+                if data.get("status") == "OK":
+                    for raw in data.get("data", []):
+                        title = raw.get("job_title", "")
+                        company = raw.get("employer_name", "")
+                        city = raw.get("job_city") or ""
+                        state = raw.get("job_state") or ""
+                        loc = f"{city}, {state}".strip(", ")
+                        apply_url = raw.get("job_apply_link", "")
+
+                        jobs.append({
+                            "id": make_job_id(title, company, "jsearch"),
+                            "title": title,
+                            "company": company,
+                            "location": loc,
+                            "country": raw.get("job_country", "US"),
+                            "is_remote": raw.get("job_is_remote", False),
+                            "is_local": False,
+                            "description": raw.get("job_description", "")[:3000],
+                            "apply_url": apply_url,
+                            "posted_date": raw.get("job_posted_at_datetime_utc", ""),
+                            "employment_type": raw.get("job_employment_type", ""),
+                            "apply_platform": detect_platform(apply_url),
+                            "employer_logo": raw.get("employer_logo", ""),
+                            "salary_min": raw.get("job_min_salary"),
+                            "salary_max": raw.get("job_max_salary"),
+                            "source": "jsearch"
+                        })
+                else:
+                    print(f"  [JSearch] API error: {data.get('message', 'unknown')}")
+
+        except Exception as e:
+            print(f"  [JSearch] Error for '{query}': {e}")
+
+    print(f"  [JSearch] Found {len(jobs)} jobs")
+    return jobs
+
+
+# ─────────────────────────────────────────────
 # SOURCE 1: LinkedIn (Greenhouse/Lever apply links)
 # ─────────────────────────────────────────────
 def fetch_linkedin_jobs(work_location: str = "remote") -> list:
@@ -73,7 +169,7 @@ def fetch_linkedin_jobs(work_location: str = "remote") -> list:
     location_param = "United States"
     remote_filter = ""
     if work_location in ["remote", "hybrid"]:
-        remote_filter = "&f_WT=2"  # LinkedIn remote filter
+        remote_filter = "&f_WT=2"
 
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -81,7 +177,7 @@ def fetch_linkedin_jobs(work_location: str = "remote") -> list:
         "Accept-Language": "en-US,en;q=0.5",
     }
 
-    for query in queries[:5]:  # limit to save time
+    for query in queries[:5]:
         try:
             url = (
                 f"https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
@@ -433,9 +529,10 @@ def find_all_jobs(max_jobs: int = 100, work_location: str = "remote") -> list:
     print(f"\nStarting job discovery...")
     print(f"Work preference: {work_location.upper()}")
     print(f"Max jobs: {max_jobs}")
-    print(f"Sources: LinkedIn, Remotive, Arbeitnow, Adzuna, HiringCafe\n")
+    print(f"Sources: JSearch, LinkedIn, Remotive, Arbeitnow, Adzuna, HiringCafe\n")
 
     all_jobs = []
+    all_jobs.extend(fetch_jsearch_jobs())
     all_jobs.extend(fetch_linkedin_jobs(work_location))
     all_jobs.extend(fetch_remotive_jobs())
     all_jobs.extend(fetch_arbeitnow_jobs())
@@ -451,13 +548,3 @@ def find_all_jobs(max_jobs: int = 100, work_location: str = "remote") -> list:
     print(f"Final job list: {len(final)} jobs ready for scoring\n")
 
     return final
-
-
-if __name__ == "__main__":
-    jobs = find_all_jobs(max_jobs=20, work_location="remote")
-    print(f"\n--- SAMPLE JOBS ---")
-    for job in jobs[:5]:
-        print(f"  [{job['source']}] {job['title']} at {job['company']}")
-        print(f"  Location: {job['location']} | Remote: {job['is_remote']}")
-        print(f"  Platform: {job['apply_platform']}")
-        print()
