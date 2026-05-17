@@ -226,14 +226,18 @@ input[type="number"]:focus {
 
 init_database()
 
-# Wipe corrupted reasoning fields that contain HTML
+# Clean corrupted job records containing raw HTML
 try:
     from core.tracker import get_connection as _gc
     _c = _gc()
     _cur = _c.cursor()
-    _cur.execute("UPDATE jobs SET reasoning = '' WHERE reasoning LIKE '<%'")
-    _cur.execute("UPDATE jobs SET reasoning = '' WHERE reasoning LIKE '%<div%'")
-    _cur.execute("UPDATE jobs SET reasoning = '' WHERE reasoning LIKE '%font-size%'")
+    _cur.execute("DELETE FROM jobs WHERE reasoning LIKE '%<div%' OR reasoning LIKE '%font-size%'")
+    # wipe HTML from reasoning
+    _cur.execute("UPDATE jobs SET reasoning = '' WHERE reasoning LIKE '<%' OR reasoning LIKE '%font-size%' OR reasoning LIKE '%<div%'")
+    # wipe HTML from description  
+    _cur.execute("UPDATE jobs SET description = '' WHERE description LIKE '<%' OR description LIKE '%font-size%'")
+    # delete jobs where title is empty or corrupted
+    _cur.execute("DELETE FROM jobs WHERE title = '' OR title IS NULL")
     _c.commit()
     _cur.close()
     _c.close()
@@ -279,19 +283,14 @@ def render_job_card(job):
     platform = job.get("apply_platform", "direct")
     is_remote = job.get("is_remote", 0)
     location = "🌐 Remote" if is_remote else f"📍 {job.get('location', '')}"
+    # Get reasoning and aggressively clean it
     _raw = job.get("reasoning", "") or ""
-    # strip all HTML tags
-    _reasoning_plain = re.sub(r"<[^>]+>", " ", _raw)
-    # strip HTML entities
-    _reasoning_plain = re.sub(r"&[a-zA-Z0-9#]+;", " ", _reasoning_plain)
-    # collapse whitespace
-    _reasoning_plain = re.sub(r"\s+", " ", _reasoning_plain).strip()
-    # if result still looks like HTML or is junk, hide it
-    if "<" in _reasoning_plain or len(_reasoning_plain) < 10:
-        _reasoning_plain = ""
-    reasoning_display = html.escape(
-        _reasoning_plain[:200] + ("..." if len(_reasoning_plain) > 200 else "")
-    )
+    # if it looks like HTML at all, just hide it entirely
+    if "<" in _raw or "font-size" in _raw or "div style" in _raw or "&lt;" in _raw:
+        reasoning_display = ""
+    else:
+        _reasoning_plain = re.sub(r"\s+", " ", _raw).strip()
+        reasoning_display = _reasoning_plain[:200] + ("..." if len(_reasoning_plain) > 200 else "")
     salary_min = job.get("salary_min")
     salary_max = job.get("salary_max")
     salary = ""
