@@ -231,7 +231,8 @@ try:
     from core.tracker import get_connection as _gc
     _c = _gc()
     _cur = _c.cursor()
-    _cur.execute("DELETE FROM jobs WHERE reasoning LIKE '%<div%' OR reasoning LIKE '%font-size%'")
+    _cur.execute("DELETE FROM jobs WHERE reasoning LIKE '<%' OR reasoning LIKE '%<div%' OR reasoning LIKE '%font-size%'")
+    _cur.execute("DELETE FROM jobs WHERE company = 'Dry Ground AI'")
     # wipe HTML from reasoning
     _cur.execute("UPDATE jobs SET reasoning = '' WHERE reasoning LIKE '<%' OR reasoning LIKE '%font-size%' OR reasoning LIKE '%<div%'")
     # wipe HTML from description  
