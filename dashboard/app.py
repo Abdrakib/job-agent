@@ -404,21 +404,90 @@ with st.sidebar:
                 from core.job_finder import find_all_jobs
                 from core.resume_parser import get_candidate_profile
                 from core.job_scorer import score_all_jobs
-                from core.tracker import save_job
+                from core.tracker import save_job, already_applied
+                from core.cover_letter import generate_and_save_cover_letter
+                from apply.greenhouse import apply_greenhouse
+                from apply.lever import apply_lever
+
                 profile = get_candidate_profile()
                 jobs = find_all_jobs(
                     max_jobs=int(get_setting("max_jobs_per_run") or 50),
                     work_location=get_setting("work_location") or "remote"
                 )
                 scored = score_all_jobs(jobs, profile, min_score=min_score)
-                # build a lookup of original jobs by id for correct saving
+
+                # save all scored jobs correctly
                 jobs_by_id = {job.get("id", ""): job for job in jobs}
                 for scored_job in scored:
                     original_job = jobs_by_id.get(scored_job.get("job_id", ""), scored_job)
-                    # ensure description doesn't bleed into reasoning
                     scored_job_clean = {k: v for k, v in scored_job.items()}
                     save_job(original_job, scored_job_clean)
-                st.success(f"Found {len(scored)} matching jobs!")
+
+                # generate cover letters + resumes for top 15 jobs
+                auto_applied = []
+                hit_apply = []
+                manual = []
+
+                # generate cover letters for top 20 jobs (cost control)
+                top_for_cover_letters = sorted(scored, key=lambda x: x.get("match_score", 0), reverse=True)[:20]
+                for job in top_for_cover_letters:
+                    if not already_applied(job.get("company", ""), job.get("job_title", "")):
+                        try:
+                            generate_and_save_cover_letter(job, profile)
+                        except Exception as cl_err:
+                            print(f"Cover letter error for {job.get('company')}: {cl_err}")
+
+                # auto-apply to ALL scored jobs — no limit
+                for job in scored:
+                    company = job.get("company", "")
+                    title = job.get("job_title", "")
+                    platform = job.get("apply_platform", "direct")
+
+                    if already_applied(company, title):
+                        continue
+
+                    if platform == "greenhouse":
+                        try:
+                            result = apply_greenhouse(
+                                job=job, scored_job=job, candidate_profile=profile,
+                                cover_letter_text=job.get("cover_letter_text", ""),
+                                resume_path="data/base_resume.pdf"
+                            )
+                            if result.get("success"):
+                                auto_applied.append(job)
+                        except Exception as e:
+                            print(f"Greenhouse error: {e}")
+
+                    elif platform == "lever":
+                        try:
+                            result = apply_lever(
+                                job=job, scored_job=job, candidate_profile=profile,
+                                cover_letter_text=job.get("cover_letter_text", ""),
+                                resume_path="data/base_resume.pdf"
+                            )
+                            if result.get("success"):
+                                auto_applied.append(job)
+                        except Exception as e:
+                            print(f"Lever error: {e}")
+
+                    elif platform == "linkedin":
+                        hit_apply.append(job)
+                    else:
+                        manual.append(job)
+
+                # send morning report email
+                try:
+                    from scheduler.runner import send_morning_report
+                    send_morning_report(auto_applied, hit_apply[:10], manual[:10])
+                except Exception as email_err:
+                    print(f"Email report error: {email_err}")
+
+                msg = f"✅ Found {len(scored)} jobs | "
+                msg += f"Auto-applied: {len(auto_applied)} | "
+                msg += f"Hit Apply: {len(hit_apply)} | "
+                msg += f"Manual: {len(manual)} | "
+                msg += f"Documents ready in Documents tab"
+                st.success(msg)
                 st.rerun()
             except Exception as e:
                 st.error(f"Error: {e}")
