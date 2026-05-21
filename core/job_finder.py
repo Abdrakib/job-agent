@@ -1,7 +1,8 @@
-import requests
 import hashlib
 import os
-from datetime import datetime
+import time
+
+import requests
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -49,7 +50,7 @@ def detect_platform(url: str) -> str:
 
 
 # ─────────────────────────────────────────────
-# SOURCE 0: JSearch via RapidAPI
+# SOURCE 0: JSearch via RapidAPI (5 calls/run to stay under 200/month)
 # ─────────────────────────────────────────────
 RAPIDAPI_KEY = os.getenv("RAPIDAPI_KEY", "")
 JSEARCH_URL = "https://jsearch.p.rapidapi.com/search"
@@ -58,6 +59,7 @@ JSEARCH_HEADERS = {
     "X-RapidAPI-Host": "jsearch.p.rapidapi.com"
 }
 
+# Full query list — runs all on paid plan
 JSEARCH_QUERIES = [
     "ML Engineer intern remote",
     "AI Engineer intern remote",
@@ -93,7 +95,7 @@ def fetch_jsearch_jobs() -> list:
 
     for query in JSEARCH_QUERIES:
         try:
-            for location in JSEARCH_LOCATIONS[:2]:
+            for location in JSEARCH_LOCATIONS[:2]:  # 2 locations per query
                 params = {
                     "query": f"{query} in {location}",
                     "page": "1",
@@ -103,7 +105,7 @@ def fetch_jsearch_jobs() -> list:
                     "job_requirements": "no_experience,under_3_years_experience"
                 }
                 response = requests.get(
-                    JSEARCH_URL, headers=JSEARCH_HEADERS, params=params, timeout=15
+                    JSEARCH_URL, headers=JSEARCH_HEADERS, params=params, timeout=30
                 )
                 data = response.json()
 
@@ -140,6 +142,8 @@ def fetch_jsearch_jobs() -> list:
         except Exception as e:
             print(f"  [JSearch] Error for '{query}': {e}")
 
+        time.sleep(1)
+
     print(f"  [JSearch] Found {len(jobs)} jobs")
     return jobs
 
@@ -169,7 +173,7 @@ def fetch_linkedin_jobs(work_location: str = "remote") -> list:
     location_param = "United States"
     remote_filter = ""
     if work_location in ["remote", "hybrid"]:
-        remote_filter = "&f_WT=2"
+        remote_filter = "&f_WT=2"  # LinkedIn remote filter
 
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -177,7 +181,7 @@ def fetch_linkedin_jobs(work_location: str = "remote") -> list:
         "Accept-Language": "en-US,en;q=0.5",
     }
 
-    for query in queries[:5]:
+    for query in queries[:5]:  # limit to save time
         try:
             url = (
                 f"https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
