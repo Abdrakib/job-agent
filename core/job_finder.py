@@ -1,5 +1,6 @@
 import hashlib
 import os
+import re
 import time
 
 import requests
@@ -257,6 +258,29 @@ def fetch_linkedin_jobs(work_location: str = "remote") -> list:
 
                 is_remote = any(w in location.lower() for w in ["remote", "anywhere"])
 
+                # try to extract real apply URL from LinkedIn job page
+                real_apply_url = apply_url
+                real_platform = "linkedin"
+                try:
+                    job_resp = requests.get(
+                        apply_url, headers=headers, timeout=10, allow_redirects=True
+                    )
+                    job_html = job_resp.text
+                    gh_match = re.search(
+                        r'https://boards\.greenhouse\.io/[^\s"\'<>]+', job_html
+                    )
+                    lv_match = re.search(
+                        r'https://jobs\.lever\.co/[^\s"\'<>]+', job_html
+                    )
+                    if gh_match:
+                        real_apply_url = gh_match.group(0)
+                        real_platform = "greenhouse"
+                    elif lv_match:
+                        real_apply_url = lv_match.group(0)
+                        real_platform = "lever"
+                except Exception:
+                    pass
+
                 jobs.append({
                     "id": make_job_id(title, company, "linkedin"),
                     "title": title,
@@ -266,10 +290,10 @@ def fetch_linkedin_jobs(work_location: str = "remote") -> list:
                     "is_remote": is_remote,
                     "is_local": False,
                     "description": f"{title} at {company} — {location}",
-                    "apply_url": apply_url,
+                    "apply_url": real_apply_url,
                     "posted_date": "",
                     "employment_type": "",
-                    "apply_platform": "linkedin",
+                    "apply_platform": real_platform,
                     "employer_logo": "",
                     "salary_min": None,
                     "salary_max": None,

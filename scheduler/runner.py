@@ -15,72 +15,75 @@ DASHBOARD_URL = os.getenv("RAILWAY_PUBLIC_DOMAIN", "web-production-f1ea50.up.rai
 
 
 def send_morning_report(auto_applied: list, hit_apply: list, manual: list):
-    """Send daily summary email to Rakib"""
+    """Send daily summary email to Rakib via SendGrid"""
     try:
-        import smtplib
-        from email.mime.text import MIMEText
-        from email.mime.multipart import MIMEMultipart
+        import urllib.request
+        import json as _json
 
-        gmail_user = os.getenv("GMAIL_USER", CANDIDATE_EMAIL)
-        gmail_password = os.getenv("GMAIL_APP_PASSWORD", "")
-
-        if not gmail_password:
-            print("  No GMAIL_APP_PASSWORD set — skipping email report")
+        sendgrid_key = os.getenv("SENDGRID_API_KEY", "")
+        if not sendgrid_key:
+            print("  No SENDGRID_API_KEY set — skipping email report")
             return
 
         today = datetime.now().strftime("%B %d, %Y")
-        subject = f"🤖 Job Agent Report — {today} | {len(auto_applied)} auto-applied, {len(hit_apply)+len(manual)} need you"
+        subject = f"Job Agent Report — {today} | {len(auto_applied)} auto-applied, {len(hit_apply)+len(manual)} need you"
 
-        body = f"""
-🤖 JOB AGENT DAILY REPORT — {today}
-{'='*50}
+        body = f"JOB AGENT DAILY REPORT — {today}\n{'='*50}\n\n"
 
-"""
         if auto_applied:
-            body += f"✅ AUTO-APPLIED ({len(auto_applied)} jobs) — Nothing needed from you\n"
+            body += f"AUTO-APPLIED ({len(auto_applied)} jobs) — Nothing needed from you\n"
             body += "-" * 40 + "\n"
             for job in auto_applied:
-                body += f"  • {job.get('job_title','?')} at {job.get('company','?')} — {job.get('match_score','?')}%\n"
+                body += f"  * {job.get('job_title','?')} at {job.get('company','?')} — {job.get('match_score','?')}%\n"
             body += "\n"
         else:
-            body += "✅ AUTO-APPLIED: 0 jobs (no Greenhouse/Lever jobs found today)\n\n"
+            body += "AUTO-APPLIED: 0 jobs (no Greenhouse/Lever jobs found today)\n\n"
 
         if hit_apply:
-            body += f"👆 HIT APPLY ({len(hit_apply)} jobs) — Open link, everything pre-filled, just click Apply\n"
+            body += f"HIT APPLY ({len(hit_apply)} jobs) — Open link, everything pre-filled, just click Apply\n"
             body += "-" * 40 + "\n"
             for job in hit_apply:
-                body += f"  • {job.get('job_title','?')} at {job.get('company','?')} — {job.get('match_score','?')}%\n"
+                body += f"  * {job.get('job_title','?')} at {job.get('company','?')} — {job.get('match_score','?')}%\n"
                 body += f"    Apply: {job.get('apply_url','')}\n"
             body += "\n"
 
         if manual:
-            body += f"✍️  MANUAL APPLY ({len(manual)} jobs) — Resume + cover letter ready in dashboard\n"
+            body += f"MANUAL APPLY ({len(manual)} jobs) — Resume + cover letter ready in dashboard\n"
             body += "-" * 40 + "\n"
             for job in manual:
-                body += f"  • {job.get('job_title','?')} at {job.get('company','?')} — {job.get('match_score','?')}%\n"
+                body += f"  * {job.get('job_title','?')} at {job.get('company','?')} — {job.get('match_score','?')}%\n"
                 body += f"    Apply: {job.get('apply_url','')}\n"
             body += "\n"
 
-        body += f"\n📊 Open your dashboard: https://{DASHBOARD_URL}\n"
-        body += f"   → Documents tab has all resumes + cover letters ready to download\n"
+        body += f"\nOpen your dashboard: https://{DASHBOARD_URL}\n"
+        body += f"Documents tab has all resumes + cover letters ready to download\n"
+        body += f"\nTotal today: {len(auto_applied) + len(hit_apply) + len(manual)} applications\n"
 
-        total = len(auto_applied) + len(hit_apply) + len(manual)
-        body += f"\nTotal applications today: {total}\n"
+        payload = _json.dumps({
+            "personalizations": [{"to": [{"email": CANDIDATE_EMAIL}]}],
+            "from": {"email": "jobagent@abdourakib.com"},
+            "reply_to": {"email": CANDIDATE_EMAIL},
+            "subject": subject,
+            "content": [{"type": "text/plain", "value": body}]
+        }).encode("utf-8")
 
-        msg = MIMEMultipart()
-        msg["From"] = gmail_user
-        msg["To"] = CANDIDATE_EMAIL
-        msg["Subject"] = subject
-        msg.attach(MIMEText(body, "plain"))
-
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-            server.login(gmail_user, gmail_password)
-            server.send_message(msg)
-
-        print(f"  ✅ Morning report sent to {CANDIDATE_EMAIL}")
+        req = urllib.request.Request(
+            "https://api.sendgrid.com/v3/mail/send",
+            data=payload,
+            headers={
+                "Authorization": f"Bearer {sendgrid_key}",
+                "Content-Type": "application/json"
+            },
+            method="POST"
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            if resp.status == 202:
+                print(f"  Morning report sent to {CANDIDATE_EMAIL}")
+            else:
+                print(f"  Email failed: status {resp.status}")
 
     except Exception as e:
-        print(f"  ❌ Email report failed: {e}")
+        print(f"  Email report failed: {e}")
 
 
 def run_job_discovery():
@@ -108,29 +111,34 @@ def run_job_discovery():
 
         print(f"Settings: max_jobs={max_jobs}, min_score={min_score}, work_location={work_location}")
 
+        # step 1 — load candidate profile
         print("\n[1/5] Loading candidate profile...")
         profile = get_candidate_profile()
         print(f"  Profile loaded for: {profile.get('name')}")
 
+        # step 2 — find jobs
         print("\n[2/5] Discovering jobs...")
         jobs = find_all_jobs(max_jobs=max_jobs, work_location=work_location)
         print(f"  Found {len(jobs)} jobs")
 
+        # step 3 — score jobs
         print("\n[3/5] Scoring jobs with Claude...")
         scored_jobs = score_all_jobs(jobs, profile, min_score=min_score)
         print(f"  {len(scored_jobs)} jobs above {min_score}% threshold")
 
+        # step 4 — save to database
         print("\n[4/5] Saving to database...")
         for job in scored_jobs:
             save_job(job, job)
         print(f"  Saved {len(scored_jobs)} jobs")
 
+        # step 5 — generate cover letters + resumes for top jobs
         print("\n[5/5] Generating cover letters and resumes...")
         top_jobs = sorted(
             scored_jobs,
             key=lambda x: (x.get("priority_flag", 0), x.get("match_score", 0)),
             reverse=True
-        )[:15]
+        )[:15]  # generate for top 15
 
         for job in top_jobs:
             try:
@@ -139,6 +147,7 @@ def run_job_discovery():
             except Exception as e:
                 print(f"  Error generating materials for {job.get('company')}: {e}")
 
+        # step 6 — auto-apply to Greenhouse/Lever
         print("\n[6] Running auto-apply...")
         for job in scored_jobs:
             platform = job.get("apply_platform", "")
@@ -186,6 +195,7 @@ def run_job_discovery():
         print(f"  Hit apply: {len(hit_apply)}")
         print(f"  Manual: {len(manual)}")
 
+        # step 7 — send morning report
         print("\n[7] Sending morning report email...")
         send_morning_report(auto_applied, hit_apply[:10], manual[:10])
 
@@ -236,8 +246,13 @@ def run_all():
 def start_scheduler():
     scheduler = BlockingScheduler(timezone="America/New_York")
 
+    # daily full run at 8am
     scheduler.add_job(run_all, CronTrigger(hour=8, minute=0), id="daily_run", name="Daily Full Run")
+
+    # inbox check every 2 hours
     scheduler.add_job(run_inbox_monitor, CronTrigger(hour="*/2", minute=30), id="inbox_check", name="Inbox Monitor")
+
+    # github sync at midnight
     scheduler.add_job(run_github_sync, CronTrigger(hour=0, minute=0), id="github_sync", name="GitHub Sync")
 
     print("🤖 Job Agent Scheduler Started")
