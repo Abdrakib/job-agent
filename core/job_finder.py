@@ -76,6 +76,9 @@ JSEARCH_QUERIES = [
     "junior ML engineer remote",
     "generative AI intern",
     "AI software engineer intern",
+    "machine learning intern site:boards.greenhouse.io",
+    "AI engineer intern site:jobs.lever.co",
+    "ML intern site:greenhouse.io",
 ]
 
 JSEARCH_LOCATIONS = [
