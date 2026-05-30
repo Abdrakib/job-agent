@@ -1,0 +1,61 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    restart: always
+    environment:
+      POSTGRES_DB: jobagent
+      POSTGRES_USER: jobagent
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U jobagent"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  web:
+    build: .
+    restart: always
+    ports:
+      - "8501:8501"
+    environment:
+      - DATABASE_URL=postgresql://jobagent:${POSTGRES_PASSWORD}@postgres:5432/jobagent
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - RAPIDAPI_KEY=${RAPIDAPI_KEY}
+      - SENDGRID_API_KEY=${SENDGRID_API_KEY}
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - GITHUB_USERNAME=${GITHUB_USERNAME}
+      - LINKEDIN_EMAIL=${LINKEDIN_EMAIL}
+      - LINKEDIN_PASSWORD=${LINKEDIN_PASSWORD}
+      - APP_URL=${APP_URL}
+      - MAX_AUTO_APPLY_PER_DAY=${MAX_AUTO_APPLY_PER_DAY:-20}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: python -m streamlit run dashboard/app.py --server.port=8501 --server.address=0.0.0.0
+
+  worker:
+    build: .
+    restart: always
+    environment:
+      - DATABASE_URL=postgresql://jobagent:${POSTGRES_PASSWORD}@postgres:5432/jobagent
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - RAPIDAPI_KEY=${RAPIDAPI_KEY}
+      - SENDGRID_API_KEY=${SENDGRID_API_KEY}
+      - GITHUB_TOKEN=${GITHUB_TOKEN}
+      - GITHUB_USERNAME=${GITHUB_USERNAME}
+      - LINKEDIN_EMAIL=${LINKEDIN_EMAIL}
+      - LINKEDIN_PASSWORD=${LINKEDIN_PASSWORD}
+      - APP_URL=${APP_URL}
+      - MAX_AUTO_APPLY_PER_DAY=${MAX_AUTO_APPLY_PER_DAY:-20}
+      - DISPLAY=:99
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: python scheduler/runner.py --schedule
+
+volumes:
+  postgres_data:

@@ -1,29 +1,62 @@
+"""
+job_finder.py — Job discovery using JSearch API + Greenhouse/Lever direct APIs
+Strategy:
+  1. Greenhouse direct API → guaranteed auto-apply URLs
+  2. Lever direct API → guaranteed auto-apply URLs  
+  3. JSearch → high volume, fills the rest
+  4. Deduplicate + filter by location preference
+"""
+import requests
 import hashlib
 import os
-import re
 import time
-
-import requests
 from dotenv import load_dotenv
 
 load_dotenv()
 
-ADZUNA_APP_ID = os.getenv("ADZUNA_APP_ID", "")
-ADZUNA_APP_KEY = os.getenv("ADZUNA_APP_KEY", "")
+RAPIDAPI_KEY = os.getenv("RAPIDAPI_KEY", "")
+JSEARCH_URL = "https://jsearch.p.rapidapi.com/search"
+JSEARCH_HEADERS = {
+    "X-RapidAPI-Key": RAPIDAPI_KEY,
+    "X-RapidAPI-Host": "jsearch.p.rapidapi.com"
+}
 
-ML_QUERIES = [
-    "machine learning engineer",
-    "AI engineer",
-    "NLP engineer",
-    "computer vision engineer",
-    "deep learning engineer",
-    "generative AI engineer",
-    "LLM engineer",
-    "data scientist",
-    "applied ML engineer",
-    "AI research intern",
-    "ML intern",
-    "AI software engineer",
+# 14 targeted ML/AI queries — covers all relevant roles
+JSEARCH_QUERIES = [
+    "machine learning engineer intern remote",
+    "AI engineer intern remote",
+    "machine learning internship entry level",
+    "generative AI engineer entry level",
+    "NLP engineer intern remote",
+    "computer vision engineer intern",
+    "deep learning engineer intern",
+    "LLM engineer entry level remote",
+    "data scientist intern remote",
+    "applied machine learning intern",
+    "AI research intern remote",
+    "junior ML engineer remote",
+    "generative AI intern",
+    "AI software engineer intern remote",
+]
+
+# ML/AI keywords to filter relevant jobs
+ML_KEYWORDS = [
+    "machine learning", "ml engineer", "ai engineer", "artificial intelligence",
+    "deep learning", "nlp", "natural language", "computer vision",
+    "data scientist", "data science", "llm", "generative ai",
+    "neural network", "pytorch", "tensorflow", "ai researcher",
+    "applied scientist", "research engineer", "ai intern", "ml intern",
+    "software engineer", "backend engineer", "full stack", "python developer"
+]
+
+# Roles to exclude — too senior or irrelevant
+EXCLUDE_KEYWORDS = [
+    "senior director", "vp of", "vice president", "chief ",
+    "principal engineer", "staff engineer", "distinguished engineer",
+    "10+ years", "15+ years", "12+ years", "8+ years",
+    "phd required", "physics", "chemistry", "biology", "genomics",
+    "hardware", "fpga", "embedded", "firmware", "sales", "marketing",
+    "recruiter", "hr ", "accounting", "legal", "financial analyst"
 ]
 
 
@@ -34,7 +67,7 @@ def make_job_id(title: str, company: str, source: str) -> str:
 
 def detect_platform(url: str) -> str:
     if not url:
-        return "unknown"
+        return "direct"
     url = url.lower()
     if "greenhouse.io" in url or "boards.greenhouse" in url:
         return "greenhouse"
@@ -46,479 +79,297 @@ def detect_platform(url: str) -> str:
         return "indeed"
     elif "workday.com" in url or "myworkday" in url:
         return "workday"
-    else:
-        return "direct"
+    return "direct"
+
+
+def is_relevant(title: str, description: str = "") -> bool:
+    """Check if job is relevant ML/AI role for Rakib"""
+    title_lower = title.lower()
+    desc_lower = (description or "").lower()[:300]
+
+    for kw in EXCLUDE_KEYWORDS:
+        if kw in title_lower:
+            return False
+
+    combined = title_lower + " " + desc_lower
+    return any(kw in combined for kw in ML_KEYWORDS)
 
 
 # ─────────────────────────────────────────────
-# SOURCE 0: JSearch via RapidAPI (5 calls/run to stay under 200/month)
+# SOURCE 1: Greenhouse Direct API
 # ─────────────────────────────────────────────
-RAPIDAPI_KEY = os.getenv("RAPIDAPI_KEY", "")
-JSEARCH_URL = "https://jsearch.p.rapidapi.com/search"
-JSEARCH_HEADERS = {
-    "X-RapidAPI-Key": RAPIDAPI_KEY,
-    "X-RapidAPI-Host": "jsearch.p.rapidapi.com"
-}
 
-# Full query list — runs all on paid plan
-JSEARCH_QUERIES = [
-    "ML Engineer intern remote",
-    "AI Engineer intern remote",
-    "machine learning internship remote",
-    "generative AI engineer entry level",
-    "NLP engineer intern remote",
-    "computer vision engineer intern",
-    "deep learning engineer intern",
-    "LLM engineer entry level",
-    "data scientist intern remote",
-    "applied machine learning intern",
-    "AI research intern remote",
-    "junior ML engineer remote",
-    "generative AI intern",
-    "AI software engineer intern",
-    "machine learning intern site:boards.greenhouse.io",
-    "AI engineer intern site:jobs.lever.co",
-    "ML intern site:greenhouse.io",
+# 150+ companies that use Greenhouse and hire ML/AI roles
+GREENHOUSE_COMPANIES = [
+    "anthropic", "openai", "scale", "cohere", "huggingface",
+    "mistral", "adept", "inflection", "perplexity", "together",
+    "nvidia", "google", "meta", "apple", "microsoft",
+    "amazon", "stripe", "airbnb", "lyft", "doordash",
+    "robinhood", "plaid", "brex", "rippling", "gusto",
+    "figma", "notion", "linear", "vercel", "supabase",
+    "datadog", "snowflake", "databricks", "palantir", "confluent",
+    "hashicorp", "mongodb", "elastic", "cockroachdb",
+    "twilio", "cloudflare", "fastly", "pagerduty", "newrelic",
+    "hubspot", "intercom", "zendesk", "freshworks",
+    "asana", "airtable", "smartsheet", "clickup",
+    "shopify", "klaviyo", "yotpo", "instacart",
+    "waymo", "cruise", "aurora", "zoox",
+    "anduril", "c3ai", "recursion", "veritone",
+    "synthesia", "runway", "soundhound", "deepgram",
+    "assemblyai", "grammarly", "jasper", "duolingo",
+    "sentry", "mixpanel", "amplitude", "heap",
+    "dbt-labs", "fivetran", "airbyte", "hightouch",
+    "retool", "temporal", "prefect", "dagster",
+    "pinecone", "weaviate", "weights-biases",
+    "labelbox", "humanloop", "braintrust",
+    "rocketlawyer", "ironclad", "docusign",
+    "tome", "gamma", "canva", "pitch",
+    "khan-academy", "coursera", "udacity", "brilliant",
+    "sentry", "logrocket", "fullstory", "posthog",
+    "segment", "rudderstack", "census",
+    "modal", "replicate", "lambdalabs",
+    "groq", "sambanova", "cerebras",
+    "primer", "shield-ai", "saildrone",
+    "benchling", "insitro", "recursion",
+    "nuro", "gatik", "kodiak", "embark",
+    "scale-ai", "appen", "defined",
+    "comet", "neptune-ai", "determined-ai",
+    "cleanlab", "aquarium", "encord",
+    "langchain", "llamaindex", "guardrails-ai",
+    "vectara", "zilliz", "qdrant",
+    "arize", "fiddler", "evidently",
+    "tecton", "feast", "hopsworks",
+    "superwise", "arthur", "truera",
+    "snorkel", "scale", "surge",
+    "predibase", "h2oai", "datarobot",
+    "bigpanda", "moogsoft", "blameless",
+    "observe", "honeycomb", "lightstep",
+    "chronosphere", "coralogix", "logz",
 ]
 
-JSEARCH_LOCATIONS = [
-    "United States",
-    "Remote",
-    "Philadelphia Pennsylvania",
+
+def fetch_greenhouse_jobs() -> list:
+    """Fetch ML/AI jobs directly from Greenhouse public board API — no auth needed"""
+    print("  [Greenhouse] Scanning company boards...")
+    jobs = []
+    errors = 0
+
+    for company in GREENHOUSE_COMPANIES:
+        try:
+            url = f"https://boards-api.greenhouse.io/v1/boards/{company}/jobs"
+            resp = requests.get(url, timeout=6)
+
+            if resp.status_code != 200:
+                continue
+
+            for job in resp.json().get("jobs", []):
+                title = job.get("title", "")
+                if not is_relevant(title):
+                    continue
+
+                location_data = job.get("location", {})
+                location = location_data.get("name", "") if isinstance(location_data, dict) else str(location_data)
+                job_id = job.get("id", "")
+                apply_url = f"https://boards.greenhouse.io/{company}/jobs/{job_id}"
+
+                jobs.append({
+                    "id": make_job_id(title, company, "greenhouse"),
+                    "title": title,
+                    "company": company.replace("-", " ").title(),
+                    "location": location,
+                    "country": "US",
+                    "is_remote": any(w in location.lower() for w in ["remote", "anywhere", "distributed", "worldwide"]),
+                    "is_local": "philadelphia" in location.lower() or "pa" in location.lower(),
+                    "description": title,
+                    "apply_url": apply_url,
+                    "posted_date": job.get("updated_at", ""),
+                    "employment_type": "",
+                    "apply_platform": "greenhouse",
+                    "employer_logo": "",
+                    "salary_min": None,
+                    "salary_max": None,
+                    "source": "greenhouse_direct"
+                })
+
+        except Exception:
+            errors += 1
+            continue
+
+    print(f"  [Greenhouse] Found {len(jobs)} ML/AI jobs ({errors} companies unreachable)")
+    return jobs
+
+
+# ─────────────────────────────────────────────
+# SOURCE 2: Lever Direct API
+# ─────────────────────────────────────────────
+
+LEVER_COMPANIES = [
+    "openai", "anthropic", "cohere", "mistral", "adept",
+    "scale-ai", "imbue", "aleph-alpha", "stability-ai",
+    "nvidia", "amd", "qualcomm", "intel", "arm",
+    "stripe", "plaid", "brex", "mercury", "ramp",
+    "notion", "coda", "craft-docs",
+    "linear", "height", "shortcut",
+    "vercel", "netlify", "render", "railway",
+    "cloudflare", "fastly", "akamai",
+    "datadog", "grafana", "elastic",
+    "mongodb", "redis", "neo4j",
+    "huggingface", "together-ai", "replicate",
+    "weights-biases", "neptune-ai", "comet-ml",
+    "labelbox", "scale", "humanloop",
+    "grammarly", "writer", "jasper",
+    "duolingo", "brilliant", "coursera",
+    "sentry", "datadog", "newrelic",
+    "segment", "rudderstack", "mparticle",
+    "figma", "sketch", "invision",
+    "asana", "monday", "clickup",
+    "shopify", "klaviyo", "recharge",
+    "instacart", "gopuff", "getir",
+    "waymo", "aurora", "motional",
+    "anduril", "shield-ai", "palantir",
+    "recursion", "insitro", "insilico-medicine",
+    "soundhound", "deepgram", "assemblyai",
+    "runway-ml", "pika-labs", "synthesia",
+    "ramp", "brex", "mercury", "pilot",
+    "rippling", "gusto", "deel", "remote",
+    "lattice", "culture-amp", "leapsome",
+    "gem", "greenhouse", "lever",
+    "retool", "airplane", "internal",
+    "temporal", "replit", "gitpod",
+    "dbt-labs", "airbyte", "fivetran",
+    "pinecone", "weaviate", "chroma",
+    "modal", "beam", "banana",
+    "langchain", "llamaindex",
+    "arize-ai", "fiddler-ai", "evidently-ai",
+    "snorkel-ai", "predibase", "h2o",
 ]
 
 
-def fetch_jsearch_jobs() -> list:
-    """Fetch from JSearch — full queries on paid plan"""
+def fetch_lever_jobs() -> list:
+    """Fetch ML/AI jobs directly from Lever public posting API — no auth needed"""
+    print("  [Lever] Scanning company boards...")
+    jobs = []
+    errors = 0
+
+    for company in LEVER_COMPANIES:
+        try:
+            url = f"https://api.lever.co/v0/postings/{company}?mode=json"
+            resp = requests.get(url, timeout=6)
+
+            if resp.status_code != 200:
+                continue
+
+            for job in resp.json():
+                title = job.get("text", "")
+                description = job.get("descriptionPlain", "")
+                if not is_relevant(title, description):
+                    continue
+
+                categories = job.get("categories", {})
+                location = categories.get("location", "")
+                commitment = categories.get("commitment", "")
+                apply_url = job.get("hostedUrl", "")
+
+                jobs.append({
+                    "id": make_job_id(title, company, "lever"),
+                    "title": title,
+                    "company": company.replace("-", " ").title(),
+                    "location": location,
+                    "country": "US",
+                    "is_remote": any(w in location.lower() for w in ["remote", "anywhere", "distributed", "worldwide"]),
+                    "is_local": "philadelphia" in location.lower() or "pa" in location.lower(),
+                    "description": description[:1000],
+                    "apply_url": apply_url,
+                    "posted_date": str(job.get("createdAt", "")),
+                    "employment_type": commitment,
+                    "apply_platform": "lever",
+                    "employer_logo": "",
+                    "salary_min": None,
+                    "salary_max": None,
+                    "source": "lever_direct"
+                })
+
+        except Exception:
+            errors += 1
+            continue
+
+    print(f"  [Lever] Found {len(jobs)} ML/AI jobs ({errors} companies unreachable)")
+    return jobs
+
+
+# ─────────────────────────────────────────────
+# SOURCE 3: JSearch API (high volume)
+# ─────────────────────────────────────────────
+
+def fetch_jsearch_jobs(work_location: str = "remote") -> list:
+    """Fetch from JSearch — 14 targeted queries, 1500 calls/month plan"""
     if not RAPIDAPI_KEY:
         print("  [JSearch] No API key, skipping")
         return []
 
-    print(f"  [JSearch] Fetching jobs ({len(JSEARCH_QUERIES)} queries)...")
+    print(f"  [JSearch] Running {len(JSEARCH_QUERIES)} queries...")
     jobs = []
 
     for query in JSEARCH_QUERIES:
         try:
-            for location in JSEARCH_LOCATIONS[:2]:  # 2 locations per query
-                params = {
-                    "query": f"{query} in {location}",
-                    "page": "1",
-                    "num_pages": "1",
-                    "date_posted": "month",
-                    "employment_types": "FULLTIME,INTERN",
-                    "job_requirements": "no_experience,under_3_years_experience"
-                }
-                response = requests.get(
-                    JSEARCH_URL, headers=JSEARCH_HEADERS, params=params, timeout=30
-                )
-                data = response.json()
+            params = {
+                "query": query,
+                "page": "1",
+                "num_pages": "2",  # 2 pages = 20 results per query
+                "date_posted": "week",  # fresh jobs only
+                "employment_types": "FULLTIME,INTERN,PARTTIME",
+                "job_requirements": "no_experience,under_3_years_experience",
+                "remote_jobs_only": "true" if work_location == "remote" else "false"
+            }
 
-                if data.get("status") == "OK":
-                    for raw in data.get("data", []):
-                        title = raw.get("job_title", "")
-                        company = raw.get("employer_name", "")
-                        city = raw.get("job_city") or ""
-                        state = raw.get("job_state") or ""
-                        loc = f"{city}, {state}".strip(", ")
-                        apply_url = raw.get("job_apply_link", "")
+            resp = requests.get(JSEARCH_URL, headers=JSEARCH_HEADERS, params=params, timeout=30)
+            data = resp.json()
 
-                        jobs.append({
-                            "id": make_job_id(title, company, "jsearch"),
-                            "title": title,
-                            "company": company,
-                            "location": loc,
-                            "country": raw.get("job_country", "US"),
-                            "is_remote": raw.get("job_is_remote", False),
-                            "is_local": False,
-                            "description": raw.get("job_description", "")[:3000],
-                            "apply_url": apply_url,
-                            "posted_date": raw.get("job_posted_at_datetime_utc", ""),
-                            "employment_type": raw.get("job_employment_type", ""),
-                            "apply_platform": detect_platform(apply_url),
-                            "employer_logo": raw.get("employer_logo", ""),
-                            "salary_min": raw.get("job_min_salary"),
-                            "salary_max": raw.get("job_max_salary"),
-                            "source": "jsearch"
-                        })
-                else:
-                    print(f"  [JSearch] API error: {data.get('message', 'unknown')}")
+            if data.get("status") == "OK":
+                for raw in data.get("data", []):
+                    title = raw.get("job_title", "")
+                    if not is_relevant(title, raw.get("job_description", "")):
+                        continue
+
+                    company = raw.get("employer_name", "")
+                    city = raw.get("job_city") or ""
+                    state = raw.get("job_state") or ""
+                    location = f"{city}, {state}".strip(", ")
+                    apply_url = raw.get("job_apply_link", "")
+
+                    jobs.append({
+                        "id": make_job_id(title, company, "jsearch"),
+                        "title": title,
+                        "company": company,
+                        "location": location,
+                        "country": raw.get("job_country", "US"),
+                        "is_remote": raw.get("job_is_remote", False),
+                        "is_local": "philadelphia" in location.lower() or ", pa" in location.lower(),
+                        "description": raw.get("job_description", "")[:2000],
+                        "apply_url": apply_url,
+                        "posted_date": raw.get("job_posted_at_datetime_utc", ""),
+                        "employment_type": raw.get("job_employment_type", ""),
+                        "apply_platform": detect_platform(apply_url),
+                        "employer_logo": raw.get("employer_logo", ""),
+                        "salary_min": raw.get("job_min_salary"),
+                        "salary_max": raw.get("job_max_salary"),
+                        "source": "jsearch"
+                    })
+            else:
+                print(f"  [JSearch] Error for '{query}': {data.get('message', 'unknown')}")
+
+            time.sleep(0.5)  # small delay to avoid throttling
 
         except Exception as e:
             print(f"  [JSearch] Error for '{query}': {e}")
-
-        time.sleep(1)
 
     print(f"  [JSearch] Found {len(jobs)} jobs")
     return jobs
 
 
 # ─────────────────────────────────────────────
-# SOURCE 1: LinkedIn (Greenhouse/Lever apply links)
+# DEDUP + FILTER
 # ─────────────────────────────────────────────
-def fetch_linkedin_jobs(work_location: str = "remote") -> list:
-    """
-    Fetch ML/AI jobs from LinkedIn public job search.
-    LinkedIn listings often embed Greenhouse/Lever apply URLs → enables auto-apply.
-    """
-    print("  [LinkedIn] Fetching ML/AI jobs...")
-    jobs = []
-
-    queries = [
-        "machine learning engineer intern",
-        "AI engineer intern",
-        "ML engineer entry level",
-        "NLP engineer intern",
-        "generative AI engineer",
-        "LLM engineer intern",
-        "data scientist intern",
-        "computer vision engineer intern",
-    ]
-
-    location_param = "United States"
-    remote_filter = ""
-    if work_location in ["remote", "hybrid"]:
-        remote_filter = "&f_WT=2"  # LinkedIn remote filter
-
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.5",
-    }
-
-    for query in queries[:5]:  # limit to save time
-        try:
-            url = (
-                f"https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search"
-                f"?keywords={requests.utils.quote(query)}"
-                f"&location={requests.utils.quote(location_param)}"
-                f"{remote_filter}&start=0&count=10"
-            )
-            response = requests.get(url, headers=headers, timeout=15)
-
-            if response.status_code != 200:
-                continue
-
-            from html.parser import HTMLParser
-
-            class LinkedInParser(HTMLParser):
-                def __init__(self):
-                    super().__init__()
-                    self.jobs = []
-                    self.current_job = {}
-                    self.in_title = False
-                    self.in_company = False
-                    self.in_location = False
-
-                def handle_starttag(self, tag, attrs):
-                    attrs_dict = dict(attrs)
-                    classes = attrs_dict.get("class", "")
-
-                    if "base-card__full-link" in classes or "job-search-card__link-absolute" in classes:
-                        href = attrs_dict.get("href", "")
-                        if href and "linkedin.com/jobs/view" in href:
-                            self.current_job["apply_url"] = href.split("?")[0]
-
-                    if "base-search-card__title" in classes or "job-search-card__title" in classes:
-                        self.in_title = True
-
-                    if "base-search-card__subtitle" in classes or "job-search-card__subtitle" in classes:
-                        self.in_company = True
-
-                    if "job-search-card__location" in classes:
-                        self.in_location = True
-
-                def handle_data(self, data):
-                    data = data.strip()
-                    if not data:
-                        return
-                    if self.in_title:
-                        self.current_job["title"] = data
-                        self.in_title = False
-                    elif self.in_company:
-                        self.current_job["company"] = data
-                        self.in_company = False
-                    elif self.in_location:
-                        self.current_job["location"] = data
-                        self.in_location = False
-
-                    if ("title" in self.current_job and
-                        "company" in self.current_job and
-                        "apply_url" in self.current_job and
-                        self.current_job not in self.jobs):
-                        self.jobs.append(dict(self.current_job))
-
-            parser = LinkedInParser()
-            parser.feed(response.text)
-
-            for raw in parser.jobs:
-                title = raw.get("title", "")
-                company = raw.get("company", "")
-                location = raw.get("location", "")
-                apply_url = raw.get("apply_url", "")
-
-                if not title or not company:
-                    continue
-
-                is_remote = any(w in location.lower() for w in ["remote", "anywhere"])
-
-                # try to extract real apply URL from LinkedIn job page
-                real_apply_url = apply_url
-                real_platform = "linkedin"
-                try:
-                    job_resp = requests.get(
-                        apply_url, headers=headers, timeout=10, allow_redirects=True
-                    )
-                    job_html = job_resp.text
-                    gh_match = re.search(
-                        r'https://boards\.greenhouse\.io/[^\s"\'<>]+', job_html
-                    )
-                    lv_match = re.search(
-                        r'https://jobs\.lever\.co/[^\s"\'<>]+', job_html
-                    )
-                    if gh_match:
-                        real_apply_url = gh_match.group(0)
-                        real_platform = "greenhouse"
-                    elif lv_match:
-                        real_apply_url = lv_match.group(0)
-                        real_platform = "lever"
-                except Exception:
-                    pass
-
-                jobs.append({
-                    "id": make_job_id(title, company, "linkedin"),
-                    "title": title,
-                    "company": company,
-                    "location": location,
-                    "country": "US",
-                    "is_remote": is_remote,
-                    "is_local": False,
-                    "description": f"{title} at {company} — {location}",
-                    "apply_url": real_apply_url,
-                    "posted_date": "",
-                    "employment_type": "",
-                    "apply_platform": real_platform,
-                    "employer_logo": "",
-                    "salary_min": None,
-                    "salary_max": None,
-                    "source": "linkedin"
-                })
-
-        except Exception as e:
-            print(f"  [LinkedIn] Error for '{query}': {e}")
-
-    print(f"  [LinkedIn] Found {len(jobs)} jobs")
-    return jobs
-
-
-# ─────────────────────────────────────────────
-# SOURCE 2: Remotive (free, no key, remote only)
-# ─────────────────────────────────────────────
-def fetch_remotive_jobs() -> list:
-    print("  [Remotive] Fetching remote tech jobs...")
-    jobs = []
-    categories = ["software-dev", "data", "qa"]
-
-    for category in categories:
-        try:
-            url = f"https://remotive.com/api/remote-jobs?category={category}&limit=50"
-            response = requests.get(url, timeout=15)
-            data = response.json()
-
-            for job in data.get("jobs", []):
-                title = job.get("title", "")
-                title_lower = title.lower()
-                if not any(kw in title_lower for kw in [
-                    "machine learning", "ml ", "ai ", "artificial intelligence",
-                    "data science", "data scientist", "nlp", "computer vision",
-                    "deep learning", "llm", "generative", "neural"
-                ]):
-                    continue
-
-                company = job.get("company_name", "")
-                apply_url = job.get("url", "")
-                jobs.append({
-                    "id": make_job_id(title, company, "remotive"),
-                    "title": title,
-                    "company": company,
-                    "location": "Remote",
-                    "country": "Worldwide",
-                    "is_remote": True,
-                    "is_local": False,
-                    "description": job.get("description", "")[:3000],
-                    "apply_url": apply_url,
-                    "posted_date": job.get("publication_date", ""),
-                    "employment_type": job.get("job_type", ""),
-                    "apply_platform": detect_platform(apply_url),
-                    "employer_logo": job.get("company_logo", ""),
-                    "salary_min": None,
-                    "salary_max": None,
-                    "source": "remotive"
-                })
-        except Exception as e:
-            print(f"  [Remotive] Error: {e}")
-
-    print(f"  [Remotive] Found {len(jobs)} ML/AI jobs")
-    return jobs
-
-
-# ─────────────────────────────────────────────
-# SOURCE 3: Arbeitnow (free, no key, remote+hybrid)
-# ─────────────────────────────────────────────
-def fetch_arbeitnow_jobs() -> list:
-    print("  [Arbeitnow] Fetching remote+hybrid tech jobs...")
-    jobs = []
-
-    try:
-        url = "https://www.arbeitnow.com/api/job-board-api"
-        response = requests.get(url, timeout=15)
-        data = response.json()
-
-        for job in data.get("data", []):
-            title = job.get("title", "")
-            title_lower = title.lower()
-
-            if not any(kw in title_lower for kw in [
-                "machine learning", "ml ", " ml", "ai ", " ai", "artificial intelligence",
-                "data science", "data scientist", "nlp", "computer vision",
-                "deep learning", "llm", "generative", "neural", "python developer",
-                "software engineer", "backend engineer"
-            ]):
-                continue
-
-            company = job.get("company_name", "")
-            is_remote = job.get("remote", False)
-            location = job.get("location", "")
-            apply_url = job.get("url", "")
-
-            jobs.append({
-                "id": make_job_id(title, company, "arbeitnow"),
-                "title": title,
-                "company": company,
-                "location": location if location else ("Remote" if is_remote else ""),
-                "country": "US/EU",
-                "is_remote": is_remote,
-                "is_local": False,
-                "description": job.get("description", "")[:3000],
-                "apply_url": apply_url,
-                "posted_date": str(job.get("created_at", "")),
-                "employment_type": "",
-                "apply_platform": detect_platform(apply_url),
-                "employer_logo": "",
-                "salary_min": None,
-                "salary_max": None,
-                "source": "arbeitnow"
-            })
-
-    except Exception as e:
-        print(f"  [Arbeitnow] Error: {e}")
-
-    print(f"  [Arbeitnow] Found {len(jobs)} ML/AI/tech jobs")
-    return jobs
-
-
-# ─────────────────────────────────────────────
-# SOURCE 4: Adzuna (250 free/month)
-# ─────────────────────────────────────────────
-def fetch_adzuna_jobs(work_location: str = "remote") -> list:
-    if not ADZUNA_APP_ID or not ADZUNA_APP_KEY:
-        print("  [Adzuna] No API key, skipping")
-        return []
-
-    print("  [Adzuna] Fetching jobs...")
-    jobs = []
-
-    for query in ML_QUERIES[:6]:
-        try:
-            params = {
-                "app_id": ADZUNA_APP_ID,
-                "app_key": ADZUNA_APP_KEY,
-                "results_per_page": 10,
-                "what": f"{query} remote" if work_location in ["remote", "hybrid"] else query,
-                "content-type": "application/json",
-            }
-            if work_location == "onsite":
-                params["where"] = "Philadelphia"
-                params["distance"] = "40"
-
-            url = "https://api.adzuna.com/v1/api/jobs/us/search/1"
-            response = requests.get(url, params=params, timeout=15)
-            data = response.json()
-
-            for job in data.get("results", []):
-                title = job.get("title", "")
-                company = job.get("company", {}).get("display_name", "")
-                location_data = job.get("location", {})
-                location = ", ".join(location_data.get("area", [])[-2:])
-                apply_url = job.get("redirect_url", "")
-
-                jobs.append({
-                    "id": make_job_id(title, company, "adzuna"),
-                    "title": title,
-                    "company": company,
-                    "location": location,
-                    "country": "US",
-                    "is_remote": "remote" in (job.get("description") or "").lower()[:500],
-                    "is_local": work_location == "onsite",
-                    "description": job.get("description", "")[:3000],
-                    "apply_url": apply_url,
-                    "posted_date": job.get("created", ""),
-                    "employment_type": job.get("contract_time", ""),
-                    "apply_platform": detect_platform(apply_url),
-                    "employer_logo": "",
-                    "salary_min": job.get("salary_min"),
-                    "salary_max": job.get("salary_max"),
-                    "source": "adzuna"
-                })
-
-        except Exception as e:
-            print(f"  [Adzuna] Error for '{query}': {e}")
-
-    print(f"  [Adzuna] Found {len(jobs)} jobs")
-    return jobs
-
-
-# ─────────────────────────────────────────────
-# SOURCE 5: HiringCafe (free, no key)
-# ─────────────────────────────────────────────
-def fetch_hiringcafe_jobs() -> list:
-    print("  [HiringCafe] Fetching ML/AI jobs...")
-    jobs = []
-
-    try:
-        url = "https://hiring.cafe/api/jobs"
-        params = {"q": "machine learning engineer", "remote": "true"}
-        response = requests.get(url, params=params, timeout=15)
-
-        if response.status_code == 200:
-            data = response.json()
-            for job in data.get("jobs", [])[:30]:
-                title = job.get("title", "")
-                company = job.get("company", "")
-                apply_url = job.get("apply_url", "")
-                jobs.append({
-                    "id": make_job_id(title, company, "hiringcafe"),
-                    "title": title,
-                    "company": company,
-                    "location": job.get("location", "Remote"),
-                    "country": "US",
-                    "is_remote": True,
-                    "is_local": False,
-                    "description": job.get("description", "")[:3000],
-                    "apply_url": apply_url,
-                    "posted_date": "",
-                    "employment_type": "",
-                    "apply_platform": detect_platform(apply_url),
-                    "employer_logo": "",
-                    "salary_min": None,
-                    "salary_max": None,
-                    "source": "hiringcafe"
-                })
-    except Exception as e:
-        print(f"  [HiringCafe] Error or unavailable: {e}")
-
-    print(f"  [HiringCafe] Found {len(jobs)} jobs")
-    return jobs
-
 
 def deduplicate_jobs(jobs: list) -> list:
     seen_ids = set()
@@ -529,9 +380,7 @@ def deduplicate_jobs(jobs: list) -> list:
         job_id = job.get("id", "")
         combo = f"{job.get('title','').lower()[:40]}_{job.get('company','').lower()[:30]}"
 
-        if job_id in seen_ids:
-            continue
-        if combo in seen_combos:
+        if job_id in seen_ids or combo in seen_combos:
             continue
 
         seen_ids.add(job_id)
@@ -543,39 +392,71 @@ def deduplicate_jobs(jobs: list) -> list:
 
 def filter_by_location(jobs: list, work_location: str) -> list:
     if work_location == "remote":
-        return [j for j in jobs if j.get("is_remote")]
+        return [j for j in jobs if j.get("is_remote") or j.get("apply_platform") in ["greenhouse", "lever"]]
     elif work_location == "hybrid":
-        return [j for j in jobs if j.get("is_remote") or
+        return [j for j in jobs if
+                j.get("is_remote") or j.get("is_local") or
                 "hybrid" in (j.get("location") or "").lower() or
-                "hybrid" in (j.get("title") or "").lower() or
-                not j.get("location") or
-                j.get("location", "").lower() in ["", "worldwide", "remote"]]
+                j.get("apply_platform") in ["greenhouse", "lever"]]
     elif work_location == "onsite":
-        return [j for j in jobs if not j.get("is_remote")]
-    else:
-        return jobs
+        return [j for j in jobs if j.get("is_local") or not j.get("is_remote")]
+    return jobs  # any
 
 
 def find_all_jobs(max_jobs: int = 100, work_location: str = "remote") -> list:
-    print(f"\nStarting job discovery...")
-    print(f"Work preference: {work_location.upper()}")
-    print(f"Max jobs: {max_jobs}")
-    print(f"Sources: JSearch, LinkedIn, Remotive, Arbeitnow, Adzuna, HiringCafe\n")
+    """
+    Main discovery function.
+    Priority order: Greenhouse → Lever → JSearch
+    Greenhouse + Lever = auto-apply guaranteed
+    JSearch = volume + variety
+    """
+    print(f"\n{'='*50}")
+    print(f"JOB DISCOVERY — {work_location.upper()} | max {max_jobs}")
+    print(f"Sources: Greenhouse Direct, Lever Direct, JSearch")
+    print(f"{'='*50}\n")
 
     all_jobs = []
-    all_jobs.extend(fetch_jsearch_jobs())
-    all_jobs.extend(fetch_linkedin_jobs(work_location))
-    all_jobs.extend(fetch_remotive_jobs())
-    all_jobs.extend(fetch_arbeitnow_jobs())
-    all_jobs.extend(fetch_adzuna_jobs(work_location))
-    all_jobs.extend(fetch_hiringcafe_jobs())
 
-    print(f"\nRaw jobs from all sources: {len(all_jobs)}")
-    unique_jobs = deduplicate_jobs(all_jobs)
-    print(f"After deduplication: {len(unique_jobs)} unique jobs")
-    filtered = filter_by_location(unique_jobs, work_location)
-    print(f"After location filter ({work_location}): {len(filtered)} jobs")
+    # Priority 1: Greenhouse (auto-apply)
+    gh_jobs = fetch_greenhouse_jobs()
+    all_jobs.extend(gh_jobs)
+
+    # Priority 2: Lever (auto-apply)
+    lv_jobs = fetch_lever_jobs()
+    all_jobs.extend(lv_jobs)
+
+    # Priority 3: JSearch (volume)
+    js_jobs = fetch_jsearch_jobs(work_location)
+    all_jobs.extend(js_jobs)
+
+    print(f"\nRaw total: {len(all_jobs)} jobs")
+    print(f"  Greenhouse: {len(gh_jobs)} | Lever: {len(lv_jobs)} | JSearch: {len(js_jobs)}")
+
+    unique = deduplicate_jobs(all_jobs)
+    print(f"After dedup: {len(unique)} unique jobs")
+
+    filtered = filter_by_location(unique, work_location)
+    print(f"After location filter: {len(filtered)} jobs")
+
+    # sort: auto-apply platforms first, then by source
+    filtered.sort(key=lambda x: (
+        0 if x.get("apply_platform") in ["greenhouse", "lever"] else 1,
+        x.get("source", "")
+    ))
+
     final = filtered[:max_jobs]
-    print(f"Final job list: {len(final)} jobs ready for scoring\n")
+    auto_apply_count = len([j for j in final if j.get("apply_platform") in ["greenhouse", "lever"]])
+    print(f"Final: {len(final)} jobs | {auto_apply_count} auto-apply ready\n")
 
     return final
+
+
+if __name__ == "__main__":
+    jobs = find_all_jobs(max_jobs=50, work_location="remote")
+    platforms = {}
+    for j in jobs:
+        p = j.get("apply_platform", "unknown")
+        platforms[p] = platforms.get(p, 0) + 1
+    print("\nPlatform breakdown:")
+    for p, count in sorted(platforms.items(), key=lambda x: x[1], reverse=True):
+        print(f"  {p}: {count}")

@@ -3,19 +3,16 @@ anthropic
 python-dotenv
 requests
 
-# Job Search
-httpx
-
 # Resume Parsing
 pymupdf
 
 # Resume PDF Building
 reportlab
 
-# Browser Automation (for Workday etc)
+# Browser Automation — LinkedIn Easy Apply
 playwright
 
-# Database (SQLite built-in; PostgreSQL when DATABASE_URL is set)
+# Database
 psycopg2-binary
 
 # Dashboard
@@ -23,7 +20,7 @@ streamlit
 streamlit-extras
 
 # Email / notifications
-twilio
+sendgrid
 google-auth
 google-auth-oauthlib
 google-auth-httplib2
@@ -36,3 +33,4 @@ apscheduler
 pandas
 python-dateutil
 loguru
+httpx
