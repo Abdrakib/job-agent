@@ -1,31 +1,39 @@
 """
-greenhouse.py — Greenhouse public API auto-apply
-Submits applications directly via Greenhouse's public board API.
-No browser needed — pure HTTP requests.
+greenhouse.py — Greenhouse auto-apply via Playwright browser automation
+Uses a real headless browser to fill and submit Greenhouse job applications.
 """
-import requests
-import json
 import os
 import re
-import base64
+import asyncio
 from pathlib import Path
 from dotenv import load_dotenv
 
 load_dotenv()
 
-DATA_DIR = Path(__file__).parent.parent / "data"
-
-# Daily apply limit
 MAX_PER_DAY = int(os.getenv("MAX_AUTO_APPLY_PER_DAY", "20"))
+
+CANDIDATE = {
+    "first_name": "Abdou Rakib",
+    "last_name": "Abente",
+    "email": os.getenv("CANDIDATE_EMAIL", "Rakibabente8@gmail.com"),
+    "phone": os.getenv("CANDIDATE_PHONE", "+12673445217"),
+    "linkedin": "https://linkedin.com/in/rakib-abente",
+    "github": "https://github.com/Abdrakib",
+    "portfolio": "https://abdourakib.com",
+    "location": "Philadelphia, PA",
+    "university": "Community College of Philadelphia",
+    "degree": "Associate's Degree",
+    "major": "Computer Science",
+    "graduation": "May 2026",
+    "salary": "70000",
+}
 
 
 def extract_greenhouse_board(apply_url: str) -> tuple:
-    """Extract (board_token, job_id) from any Greenhouse URL format"""
     patterns = [
         r"greenhouse\.io/([^/]+)/jobs/(\d+)",
         r"boards\.greenhouse\.io/([^/]+)/jobs/(\d+)",
         r"job-boards\.greenhouse\.io/([^/]+)/jobs/(\d+)",
-        r"boards-api\.greenhouse\.io/v1/boards/([^/]+)/jobs/(\d+)",
     ]
     for pattern in patterns:
         match = re.search(pattern, apply_url)
@@ -34,178 +42,154 @@ def extract_greenhouse_board(apply_url: str) -> tuple:
     return None, None
 
 
-def get_job_questions(board_token: str, job_id: str) -> list:
-    """Fetch custom application questions for a Greenhouse job"""
-    try:
-        url = f"https://boards-api.greenhouse.io/v1/boards/{board_token}/jobs/{job_id}?questions=true"
-        resp = requests.get(url, timeout=10)
-        if resp.status_code == 200:
-            return resp.json().get("questions", [])
-    except Exception:
-        pass
-    return []
-
-
-def answer_question(label: str, q_type: str, candidate_profile: dict) -> str:
-    """Intelligently answer any Greenhouse application question"""
-    label_lower = label.lower()
-
-    # URLs and social
-    if "github" in label_lower:
-        return "https://github.com/Abdrakib"
-    if "linkedin" in label_lower:
-        return "https://linkedin.com/in/rakib-abente"
-    if "portfolio" in label_lower or "website" in label_lower or "personal site" in label_lower:
-        return "https://abdourakib.com"
-    if "huggingface" in label_lower:
-        return "https://huggingface.co/Abdourakib"
-
-    # Work authorization
-    if any(w in label_lower for w in ["authorized", "eligible", "visa", "sponsorship", "work in the us"]):
-        return "Yes"
-    if "require sponsorship" in label_lower or "need sponsorship" in label_lower:
-        return "No"
-
-    # Education
-    if "degree" in label_lower or "highest education" in label_lower:
-        return "Associate's Degree"
-    if "school" in label_lower or "university" in label_lower or "institution" in label_lower:
-        return "Community College of Philadelphia"
-    if "major" in label_lower or "field of study" in label_lower:
-        return "Computer Science"
-    if "graduation" in label_lower or "grad date" in label_lower:
-        return "May 2026"
-    if "gpa" in label_lower:
-        return "3.5"
-
-    # Experience
-    if "years of experience" in label_lower or "years experience" in label_lower:
-        return "1"
-    if "current company" in label_lower or "employer" in label_lower:
-        return "Buildawn Labs (ML Internship)"
-    if "current title" in label_lower or "current role" in label_lower:
-        return "Machine Learning Intern"
-
-    # Availability
-    if "start date" in label_lower or "available" in label_lower:
-        return "Immediately"
-    if "notice period" in label_lower:
-        return "2 weeks"
-
-    # Salary
-    if "salary" in label_lower or "compensation" in label_lower or "expected" in label_lower:
-        return "70000"
-
-    # Location
-    if "city" in label_lower:
-        return "Philadelphia"
-    if "state" in label_lower:
-        return "Pennsylvania"
-    if "country" in label_lower:
-        return "United States"
-    if "zip" in label_lower or "postal" in label_lower:
-        return "19111"
-
-    # How did you hear
-    if any(w in label_lower for w in ["hear about", "find out", "referred", "source"]):
-        return "LinkedIn"
-
-    # Race/ethnicity (optional, answer prefer not to say)
-    if "race" in label_lower or "ethnicity" in label_lower:
-        return "Decline to self-identify"
-
-    # Gender (optional)
-    if "gender" in label_lower:
-        return "Decline to self-identify"
-
-    # Veteran status
-    if "veteran" in label_lower or "military" in label_lower:
-        return "I am not a protected veteran"
-
-    # Disability
-    if "disability" in label_lower or "disabled" in label_lower:
-        return "I don't wish to answer"
-
-    # Remote/hybrid
-    if "remote" in label_lower or "hybrid" in label_lower or "onsite" in label_lower:
-        return "Yes"
-
-    # Cover letter as text
-    if "cover letter" in label_lower and q_type in ["textarea", "long_text"]:
-        return ""  # handled separately
-
+def _answer(label: str, cover_letter: str = "") -> str:
+    l = label.lower()
+    if "first name" in l: return CANDIDATE["first_name"]
+    if "last name" in l: return CANDIDATE["last_name"]
+    if "email" in l: return CANDIDATE["email"]
+    if "phone" in l: return CANDIDATE["phone"]
+    if "linkedin" in l: return CANDIDATE["linkedin"]
+    if "github" in l: return CANDIDATE["github"]
+    if "portfolio" in l or "website" in l: return CANDIDATE["portfolio"]
+    if "cover letter" in l: return cover_letter[:3000]
+    if "salary" in l or "compensation" in l: return CANDIDATE["salary"]
+    if "authorized" in l or "visa" in l: return "Yes"
+    if "sponsorship" in l or "sponsor" in l: return "No"
+    if "degree" in l or "education" in l: return CANDIDATE["degree"]
+    if "school" in l or "university" in l: return CANDIDATE["university"]
+    if "major" in l or "field of study" in l: return CANDIDATE["major"]
+    if "graduation" in l: return CANDIDATE["graduation"]
+    if "years" in l and "experience" in l: return "1"
+    if "city" in l: return "Philadelphia"
+    if "state" in l: return "Pennsylvania"
+    if "country" in l: return "United States"
+    if "zip" in l or "postal" in l: return "19111"
+    if "start" in l or "available" in l: return "Immediately"
+    if "hear" in l or "source" in l: return "LinkedIn"
+    if "race" in l or "ethnicity" in l: return "Decline to self-identify"
+    if "gender" in l: return "Decline to self-identify"
+    if "veteran" in l or "military" in l: return "I am not a protected veteran"
+    if "disability" in l: return "I don't wish to answer"
+    if "remote" in l or "hybrid" in l: return "Yes"
     return ""
 
 
-def build_application_payload(
-    candidate_profile: dict,
-    questions: list,
-    cover_letter_text: str,
-    resume_path: str
-) -> dict:
-    """Build complete Greenhouse application payload"""
-    name_parts = candidate_profile.get("name", "Abdou Rakib Abente").split()
-    first_name = name_parts[0]
-    last_name = " ".join(name_parts[1:]) if len(name_parts) > 1 else name_parts[-1]
+async def _fill_and_submit(apply_url: str, cover_letter: str, resume_path: str) -> dict:
+    from playwright.async_api import async_playwright, TimeoutError as PWTimeout
 
-    # encode resume
-    resume_b64 = ""
-    resume_filename = "resume_abdou_rakib.pdf"
-    resume_file = Path(resume_path) if resume_path else None
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True, args=["--no-sandbox", "--disable-dev-shm-usage"])
+        page = await browser.new_page()
 
-    if resume_file and resume_file.exists():
-        with open(resume_file, "rb") as f:
-            resume_b64 = base64.b64encode(f.read()).decode("utf-8")
-        resume_filename = resume_file.name
+        try:
+            await page.goto(apply_url, timeout=30000, wait_until="networkidle")
 
-    # encode cover letter
-    cl_b64 = ""
-    if cover_letter_text:
-        cl_b64 = base64.b64encode(cover_letter_text.encode("utf-8")).decode("utf-8")
+            # Click "Apply" button if present (some pages have a landing page first)
+            for btn_text in ["Apply for this job", "Apply Now", "Apply", "Submit Application"]:
+                try:
+                    btn = page.get_by_role("link", name=btn_text).first
+                    if await btn.is_visible(timeout=2000):
+                        await btn.click()
+                        await page.wait_for_load_state("networkidle")
+                        break
+                except Exception:
+                    pass
 
-    payload = {
-        "first_name": first_name,
-        "last_name": last_name,
-        "email": candidate_profile.get("email", "Rakibabente8@gmail.com"),
-        "phone": candidate_profile.get("phone", "+12673445217"),
-        "resume_content": resume_b64,
-        "resume_content_filename": resume_filename,
-        "cover_letter_content": cl_b64,
-        "cover_letter_content_filename": "cover_letter_abdou_rakib.txt",
-        "linkedin_profile_url": "https://linkedin.com/in/rakib-abente",
-        "website": "https://abdourakib.com",
-        "social_media_urls": [{"url": "https://github.com/Abdrakib"}],
-        "mapped_questions": []
-    }
+            # Fill all visible text inputs
+            inputs = await page.query_selector_all("input[type='text'], input[type='email'], input[type='tel'], textarea")
+            for inp in inputs:
+                label_text = ""
+                # try to find associated label
+                try:
+                    inp_id = await inp.get_attribute("id")
+                    if inp_id:
+                        label_el = await page.query_selector(f"label[for='{inp_id}']")
+                        if label_el:
+                            label_text = (await label_el.inner_text()).strip()
+                except Exception:
+                    pass
 
-    # answer all custom questions
-    for q in questions:
-        q_id = q.get("id")
-        q_label = q.get("label", "")
-        q_type = q.get("type", "input_text")
-        q_required = q.get("required", False)
+                if not label_text:
+                    try:
+                        label_text = await inp.get_attribute("placeholder") or ""
+                        aria = await inp.get_attribute("aria-label") or ""
+                        name_attr = await inp.get_attribute("name") or ""
+                        label_text = label_text or aria or name_attr
+                    except Exception:
+                        pass
 
-        if not q_id:
-            continue
+                answer = _answer(label_text, cover_letter)
+                if answer:
+                    await inp.fill(answer)
 
-        # skip questions already handled in main payload
-        label_lower = q_label.lower()
-        if any(w in label_lower for w in ["first name", "last name", "email", "phone", "resume", "cover letter"]):
-            continue
+            # Upload resume
+            if resume_path and Path(resume_path).exists():
+                file_inputs = await page.query_selector_all("input[type='file']")
+                for fi in file_inputs:
+                    try:
+                        await fi.set_input_files(resume_path)
+                        break
+                    except Exception:
+                        pass
 
-        answer = answer_question(q_label, q_type, candidate_profile)
+            # Handle dropdowns (select elements)
+            selects = await page.query_selector_all("select")
+            for sel in selects:
+                try:
+                    sel_id = await sel.get_attribute("id") or ""
+                    label_el = await page.query_selector(f"label[for='{sel_id}']")
+                    label_text = (await label_el.inner_text()).strip() if label_el else sel_id
 
-        # for cover letter text questions
-        if "cover letter" in label_lower and not answer:
-            answer = cover_letter_text[:3000] if cover_letter_text else ""
+                    options = await sel.query_selector_all("option")
+                    answer = _answer(label_text, cover_letter).lower()
 
-        if answer or q_required:
-            payload["mapped_questions"].append({
-                "id": q_id,
-                "answer": answer or ""
-            })
+                    for opt in options:
+                        opt_text = (await opt.inner_text()).lower()
+                        opt_val = (await opt.get_attribute("value") or "").lower()
+                        if answer and (answer in opt_text or answer in opt_val):
+                            await sel.select_option(value=await opt.get_attribute("value"))
+                            break
+                except Exception:
+                    pass
 
-    return payload
+            # Submit the form
+            submitted = False
+            for submit_text in ["Submit Application", "Submit", "Apply", "Send Application"]:
+                try:
+                    btn = page.get_by_role("button", name=submit_text).first
+                    if await btn.is_visible(timeout=2000):
+                        await btn.click()
+                        await page.wait_for_load_state("networkidle", timeout=15000)
+                        submitted = True
+                        break
+                except Exception:
+                    pass
+
+            if not submitted:
+                # fallback: find any submit button
+                try:
+                    btn = await page.query_selector("button[type='submit']")
+                    if btn:
+                        await btn.click()
+                        await page.wait_for_load_state("networkidle", timeout=15000)
+                        submitted = True
+                except Exception:
+                    pass
+
+            # Check for success indicators
+            page_text = (await page.inner_text("body")).lower()
+            success_signals = ["application submitted", "thank you", "we received", "successfully applied", "application received"]
+            success = any(s in page_text for s in success_signals)
+
+            await browser.close()
+            return {"submitted": submitted, "success": success, "page_text": page_text[:300]}
+
+        except PWTimeout:
+            await browser.close()
+            return {"submitted": False, "success": False, "error": "timeout"}
+        except Exception as e:
+            await browser.close()
+            return {"submitted": False, "success": False, "error": str(e)[:200]}
 
 
 def apply_greenhouse(
@@ -216,70 +200,49 @@ def apply_greenhouse(
     resume_path: str,
     applied_today_count: int = 0
 ) -> dict:
-    """
-    Submit application to Greenhouse.
-    Returns result dict with success/failure details.
-    """
     apply_url = job.get("apply_url", "")
     company = job.get("company", scored_job.get("company", ""))
     title = job.get("title", scored_job.get("job_title", ""))
 
-    # daily limit check
     if applied_today_count >= MAX_PER_DAY:
         return {"success": False, "reason": "daily_limit_reached", "company": company, "title": title}
 
-    # duplicate check
     from core.tracker import already_applied
     if already_applied(company, title):
         return {"success": False, "reason": "duplicate", "company": company, "title": title}
 
-    # extract board token + job ID
     board_token, job_id = extract_greenhouse_board(apply_url)
     if not board_token or not job_id:
         print(f"  [Greenhouse] Could not parse URL: {apply_url}")
         return {"success": False, "reason": "invalid_url", "company": company, "title": title}
 
-    print(f"  [Greenhouse] Applying: {title} at {company} (board: {board_token}, job: {job_id})")
+    print(f"  [Greenhouse] 🌐 Applying via browser: {title} at {company}")
 
-    # get custom questions
-    questions = get_job_questions(board_token, job_id)
-
-    # build payload
-    payload = build_application_payload(
-        candidate_profile, questions, cover_letter_text, resume_path
-    )
-
-    # submit application
-    api_url = f"https://boards-api.greenhouse.io/v1/boards/{board_token}/jobs/{job_id}"
     try:
-        resp = requests.post(
-            api_url,
-            json=payload,
-            headers={"Content-Type": "application/json"},
-            timeout=30
-        )
-
-        if resp.status_code in [200, 201]:
-            print(f"  [Greenhouse] ✅ Applied: {title} at {company}")
-            return {
-                "success": True,
-                "company": company,
-                "title": title,
-                "platform": "greenhouse",
-                "apply_url": apply_url,
-                "status_code": resp.status_code
-            }
-        elif resp.status_code == 422:
-            # unprocessable — missing required field
-            print(f"  [Greenhouse] ⚠️  422 Unprocessable: {resp.text[:200]}")
-            return {"success": False, "reason": f"422_unprocessable", "company": company, "title": title}
-        elif resp.status_code == 403:
-            print(f"  [Greenhouse] ⚠️  403 Forbidden — company disabled API submissions")
-            return {"success": False, "reason": "api_disabled", "company": company, "title": title}
-        else:
-            print(f"  [Greenhouse] ❌ Failed {resp.status_code}: {resp.text[:100]}")
-            return {"success": False, "reason": f"http_{resp.status_code}", "company": company, "title": title}
-
+        result = asyncio.run(_fill_and_submit(apply_url, cover_letter_text, resume_path))
     except Exception as e:
-        print(f"  [Greenhouse] ❌ Exception: {e}")
         return {"success": False, "reason": str(e)[:100], "company": company, "title": title}
+
+    if result.get("success"):
+        print(f"  [Greenhouse] ✅ Applied: {title} at {company}")
+        return {
+            "success": True,
+            "company": company,
+            "title": title,
+            "platform": "greenhouse",
+            "apply_url": apply_url,
+        }
+    elif result.get("submitted"):
+        # submitted but couldn't confirm — treat as success
+        print(f"  [Greenhouse] ✅ Submitted (unconfirmed): {title} at {company}")
+        return {
+            "success": True,
+            "company": company,
+            "title": title,
+            "platform": "greenhouse",
+            "apply_url": apply_url,
+        }
+    else:
+        error = result.get("error", "unknown")
+        print(f"  [Greenhouse] ❌ Failed: {title} at {company} — {error}")
+        return {"success": False, "reason": error, "company": company, "title": title}
