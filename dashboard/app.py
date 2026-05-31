@@ -404,88 +404,127 @@ with st.sidebar:
                 from core.job_finder import find_all_jobs
                 from core.resume_parser import get_candidate_profile
                 from core.job_scorer import score_all_jobs
-                from core.tracker import save_job, already_applied
+                from core.tracker import save_job, already_applied, save_application
                 from core.cover_letter import generate_and_save_cover_letter
                 from apply.greenhouse import apply_greenhouse
                 from apply.lever import apply_lever
+                from datetime import date
 
+                DAILY_APPLY_LIMIT = 20
                 profile = get_candidate_profile()
-                jobs = find_all_jobs(
-                    max_jobs=int(get_setting("max_jobs_per_run") or 50),
-                    work_location=get_setting("work_location") or "remote"
-                )
-                scored = score_all_jobs(jobs, profile, min_score=min_score)
 
-                # save all scored jobs correctly
-                jobs_by_id = {job.get("id", ""): job for job in jobs}
-                for scored_job in scored:
-                    original_job = jobs_by_id.get(scored_job.get("job_id", ""), scored_job)
-                    scored_job_clean = {k: v for k, v in scored_job.items()}
-                    save_job(original_job, scored_job_clean)
+                # count how many already applied today
+                from core.tracker import get_applications
+                today_str = date.today().isoformat()
+                apps_today = [a for a in get_applications() if (a.get("date_applied") or "")[:10] == today_str]
+                applied_today = len(apps_today)
 
-                # generate cover letters + resumes for top 15 jobs
                 auto_applied = []
                 hit_apply = []
                 manual = []
 
-                # generate cover letters for top 20 jobs (cost control)
-                top_for_cover_letters = sorted(scored, key=lambda x: x.get("match_score", 0), reverse=True)[:20]
-                for job in top_for_cover_letters:
-                    if not already_applied(job.get("company", ""), job.get("job_title", "")):
-                        try:
-                            generate_and_save_cover_letter(job, profile)
-                        except Exception as cl_err:
-                            print(f"Cover letter error for {job.get('company')}: {cl_err}")
+                # keep fetching and applying until we hit 20 for the day
+                rounds = 0
+                max_rounds = 5  # safety cap
+                while applied_today < DAILY_APPLY_LIMIT and rounds < max_rounds:
+                    rounds += 1
+                    remaining = DAILY_APPLY_LIMIT - applied_today
+                    print(f"[Round {rounds}] Applied today: {applied_today}, need {remaining} more")
 
-                # auto-apply to ALL scored jobs — no limit
-                for job in scored:
-                    company = job.get("company", "")
-                    title = job.get("job_title", "")
-                    platform = job.get("apply_platform", "direct")
+                    jobs = find_all_jobs(
+                        max_jobs=int(get_setting("max_jobs_per_run") or 50),
+                        work_location=get_setting("work_location") or "remote"
+                    )
+                    scored = score_all_jobs(jobs, profile, min_score=min_score)
 
-                    if already_applied(company, title):
-                        continue
+                    # save all scored jobs
+                    jobs_by_id = {job.get("id", ""): job for job in jobs}
+                    for scored_job in scored:
+                        original_job = jobs_by_id.get(scored_job.get("job_id", ""), scored_job)
+                        save_job(original_job, {k: v for k, v in scored_job.items()})
 
-                    if platform == "greenhouse":
-                        try:
-                            result = apply_greenhouse(
-                                job=job, scored_job=job, candidate_profile=profile,
-                                cover_letter_text=job.get("cover_letter_text", ""),
-                                resume_path="data/base_resume.pdf"
-                            )
-                            if result.get("success"):
-                                auto_applied.append(job)
-                        except Exception as e:
-                            print(f"Greenhouse error: {e}")
+                    # generate cover letters for top jobs
+                    top_for_cover_letters = sorted(scored, key=lambda x: x.get("match_score", 0), reverse=True)[:20]
+                    for job in top_for_cover_letters:
+                        if not already_applied(job.get("company", ""), job.get("job_title", "")):
+                            try:
+                                generate_and_save_cover_letter(job, profile)
+                            except Exception as cl_err:
+                                print(f"Cover letter error for {job.get('company')}: {cl_err}")
 
-                    elif platform == "lever":
-                        try:
-                            result = apply_lever(
-                                job=job, scored_job=job, candidate_profile=profile,
-                                cover_letter_text=job.get("cover_letter_text", ""),
-                                resume_path="data/base_resume.pdf"
-                            )
-                            if result.get("success"):
-                                auto_applied.append(job)
-                        except Exception as e:
-                            print(f"Lever error: {e}")
+                    # apply to jobs until daily limit reached
+                    new_applied_this_round = 0
+                    for job in scored:
+                        if applied_today >= DAILY_APPLY_LIMIT:
+                            break
 
-                    elif platform == "linkedin":
-                        hit_apply.append(job)
-                    else:
-                        manual.append(job)
+                        company = job.get("company", "")
+                        title = job.get("job_title", "")
+                        platform = job.get("apply_platform", "direct")
+                        job_id = job.get("job_id", job.get("id", ""))
 
-                # send morning report email
+                        if already_applied(company, title):
+                            continue
+
+                        # use generated resume if available
+                        resume_path = job.get("resume_path") or "data/base_resume.pdf"
+                        cover_letter_text = job.get("cover_letter_text", "")
+
+                        if platform == "greenhouse":
+                            try:
+                                result = apply_greenhouse(
+                                    job=job, scored_job=job, candidate_profile=profile,
+                                    cover_letter_text=cover_letter_text,
+                                    resume_path=resume_path,
+                                    applied_today_count=applied_today
+                                )
+                                if result.get("success"):
+                                    save_application(job_id, company, title, platform, job.get("apply_url", ""), None, resume_path)
+                                    auto_applied.append(job)
+                                    applied_today += 1
+                                    new_applied_this_round += 1
+                            except Exception as e:
+                                print(f"Greenhouse error: {e}")
+
+                        elif platform == "lever":
+                            try:
+                                result = apply_lever(
+                                    job=job, scored_job=job, candidate_profile=profile,
+                                    cover_letter_text=cover_letter_text,
+                                    resume_path=resume_path,
+                                    applied_today_count=applied_today
+                                )
+                                if result.get("success"):
+                                    save_application(job_id, company, title, platform, job.get("apply_url", ""), None, resume_path)
+                                    auto_applied.append(job)
+                                    applied_today += 1
+                                    new_applied_this_round += 1
+                            except Exception as e:
+                                print(f"Lever error: {e}")
+
+                        elif platform == "linkedin":
+                            hit_apply.append(job)
+                        else:
+                            manual.append(job)
+
+                    # if no new applications in this round, stop to avoid infinite loop
+                    if new_applied_this_round == 0:
+                        print(f"[Round {rounds}] No new applications found, stopping.")
+                        break
+
+                # send daily report email
                 try:
-                    from scheduler.runner import send_morning_report
-                    send_morning_report(auto_applied, hit_apply[:10], manual[:10])
+                    from scheduler.runner import send_daily_report
+                    send_daily_report(
+                        auto_applied,
+                        hit_apply[:10] + manual[:10],
+                        get_stats(),
+                    )
                 except Exception as email_err:
                     print(f"Email report error: {email_err}")
 
-                msg = f"✅ Found {len(scored)} jobs | "
-                msg += f"Auto-applied: {len(auto_applied)} | "
-                msg += f"Hit Apply: {len(hit_apply)} | "
-                msg += f"Manual: {len(manual)} | "
+                msg = f"✅ Applied today: {applied_today}/{DAILY_APPLY_LIMIT} | "
+                msg += f"Auto-applied this run: {len(auto_applied)} | "
                 msg += f"Documents ready in Documents tab"
                 st.success(msg)
                 st.rerun()
