@@ -28,30 +28,47 @@ def classify_email(email_content: dict) -> dict:
     sender = email_content.get("from", "").lower()
     text = subject + " " + body
 
-    # Interview signals
-    if any(w in text for w in ["interview", "schedule", "call", "meet", "zoom", "teams", "calendly"]):
-        return {"type": "INTERVIEW_REQUEST", "confidence": 85,
+    # Must be job-related first — filter out obvious noise
+    job_signals = ["application", "applied", "position", "role", "opportunity",
+                   "candidate", "hiring", "recruitment", "job offer", "your resume",
+                   "your profile", "interview", "recruiter"]
+    is_job_related = any(w in text for w in job_signals)
+
+    if not is_job_related:
+        return {"type": "IRRELEVANT", "confidence": 95,
+                "company": "", "role": "", "action_needed": "", "urgent": False}
+
+    # Interview signals — must be job-related AND have scheduling intent
+    interview_keywords = ["schedule an interview", "schedule a call", "schedule a meeting",
+                          "invite you to interview", "like to interview", "want to interview",
+                          "interview invitation", "phone screen", "video interview",
+                          "zoom interview", "teams interview", "calendly"]
+    if any(w in text for w in interview_keywords):
+        return {"type": "INTERVIEW_REQUEST", "confidence": 90,
                 "company": sender.split("@")[-1].split(".")[0],
                 "role": "", "action_needed": "Schedule the interview", "urgent": True}
 
     # Rejection signals
     if any(w in text for w in ["unfortunately", "not moving forward", "other candidates",
-                                "position has been filled", "not selected", "regret to inform"]):
+                                "position has been filled", "not selected", "regret to inform",
+                                "we will not", "decided to move forward with other"]):
         return {"type": "REJECTION", "confidence": 90,
                 "company": sender.split("@")[-1].split(".")[0],
                 "role": "", "action_needed": "Note rejection, keep applying", "urgent": False}
 
     # Confirmation signals
     if any(w in text for w in ["received your application", "thank you for applying",
-                                "application received", "we received", "successfully submitted"]):
+                                "application received", "we received your", "successfully submitted",
+                                "application has been submitted"]):
         return {"type": "CONFIRMATION", "confidence": 85,
                 "company": sender.split("@")[-1].split(".")[0],
                 "role": "", "action_needed": "Wait for response", "urgent": False}
 
     # Human reply signals
-    if any(w in text for w in ["wanted to reach out", "following up", "saw your application",
-                                "impressed", "would love to"]):
-        return {"type": "HUMAN_REPLY", "confidence": 75,
+    if any(w in text for w in ["wanted to reach out", "saw your application",
+                                "impressed with your", "would love to connect",
+                                "your background", "your experience caught"]):
+        return {"type": "HUMAN_REPLY", "confidence": 80,
                 "company": sender.split("@")[-1].split(".")[0],
                 "role": "", "action_needed": "Reply promptly", "urgent": True}
 
