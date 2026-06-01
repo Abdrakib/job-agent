@@ -469,6 +469,25 @@ with st.sidebar:
                         # use generated resume if available
                         resume_path = job.get("resume_path") or "data/base_resume.pdf"
                         cover_letter_text = job.get("cover_letter_text", "")
+                        apply_url = job.get("apply_url", "")
+
+                        # look up the real job id from the database
+                        from core.tracker import get_connection, _use_postgres
+                        _conn = get_connection()
+                        _cur = _conn.cursor()
+                        if _use_postgres():
+                            _cur.execute("SELECT id, resume_path, cover_letter_text FROM jobs WHERE company=%s AND title=%s", (company, title))
+                        else:
+                            _cur.execute("SELECT id, resume_path, cover_letter_text FROM jobs WHERE company=? AND title=?", (company, title))
+                        _jrow = _cur.fetchone()
+                        _cur.close()
+                        _conn.close()
+                        if _jrow:
+                            job_id = _jrow["id"]
+                            resume_path = _jrow.get("resume_path") or resume_path
+                            cover_letter_text = _jrow.get("cover_letter_text") or cover_letter_text
+                        else:
+                            job_id = job.get("job_id") or job.get("id") or ""
 
                         if platform == "greenhouse":
                             try:
@@ -479,10 +498,11 @@ with st.sidebar:
                                     applied_today_count=applied_today
                                 )
                                 if result.get("success"):
-                                    save_application(job_id, company, title, platform, job.get("apply_url", ""), None, resume_path)
+                                    save_application(job_id, company, title, platform, apply_url, None, resume_path)
                                     auto_applied.append(job)
                                     applied_today += 1
                                     new_applied_this_round += 1
+                                    print(f"  [DB] Saved application for {title} at {company} (job_id={job_id})")
                             except Exception as e:
                                 print(f"Greenhouse error: {e}")
 
@@ -495,10 +515,11 @@ with st.sidebar:
                                     applied_today_count=applied_today
                                 )
                                 if result.get("success"):
-                                    save_application(job_id, company, title, platform, job.get("apply_url", ""), None, resume_path)
+                                    save_application(job_id, company, title, platform, apply_url, None, resume_path)
                                     auto_applied.append(job)
                                     applied_today += 1
                                     new_applied_this_round += 1
+                                    print(f"  [DB] Saved application for {title} at {company} (job_id={job_id})")
                             except Exception as e:
                                 print(f"Lever error: {e}")
 
