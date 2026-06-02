@@ -277,6 +277,20 @@ def platform_badge(platform):
     label = f"⚡ {platform}" if auto else platform
     return f'<span style="background:{bg};color:{color};font-size:10px;font-weight:700;padding:2px 8px;border-radius:4px;font-family:Space Mono,monospace;text-transform:uppercase;">{label}</span>'
 
+def strip_html(text: str) -> str:
+    """Permanently strip all HTML tags and decode entities from a string."""
+    if not text:
+        return ""
+    # decode html entities like &lt; &gt; &amp;
+    text = html.unescape(text)
+    # remove all html tags
+    text = re.sub(r"<[^>]+>", " ", text)
+    # remove inline style artifacts (font-size:14px etc)
+    text = re.sub(r"[a-z\-]+:[^;\"'\s]+;?", " ", text)
+    # collapse whitespace
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
 def render_job_card(job):
     priority = job.get("priority_flag", 0)
     border = "border-left: 3px solid #D4AF37;" if priority else "border-left: 3px solid rgba(212,175,55,0.2);"
@@ -284,14 +298,10 @@ def render_job_card(job):
     platform = job.get("apply_platform", "direct")
     is_remote = job.get("is_remote", 0)
     location = "🌐 Remote" if is_remote else f"📍 {job.get('location', '')}"
-    # Get reasoning and aggressively clean it
+    # Strip HTML from reasoning completely — works on any format
     _raw = job.get("reasoning", "") or ""
-    # if it looks like HTML at all, just hide it entirely
-    if "<" in _raw or "font-size" in _raw or "div style" in _raw or "&lt;" in _raw:
-        reasoning_display = ""
-    else:
-        _reasoning_plain = re.sub(r"\s+", " ", _raw).strip()
-        reasoning_display = _reasoning_plain[:200] + ("..." if len(_reasoning_plain) > 200 else "")
+    _clean = strip_html(_raw)
+    reasoning_display = (_clean[:200] + "...") if len(_clean) > 200 else _clean
     salary_min = job.get("salary_min")
     salary_max = job.get("salary_max")
     salary = ""
