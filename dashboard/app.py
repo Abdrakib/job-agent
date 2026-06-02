@@ -277,16 +277,14 @@ def platform_badge(platform):
     label = f"⚡ {platform}" if auto else platform
     return f'<span style="background:{bg};color:{color};font-size:10px;font-weight:700;padding:2px 8px;border-radius:4px;font-family:Space Mono,monospace;text-transform:uppercase;">{label}</span>'
 
-def strip_html(text: str) -> str:
-    """Permanently strip all HTML tags and decode entities from a string."""
+def clean_reasoning(text: str) -> str:
+    """Extract plain text from reasoning — handles raw HTML, encoded HTML, and plain text."""
     if not text:
         return ""
-    # decode html entities like &lt; &gt; &amp;
+    # decode html entities (&lt; &gt; &amp; etc)
     text = html.unescape(text)
-    # remove all html tags
+    # strip all html tags
     text = re.sub(r"<[^>]+>", " ", text)
-    # remove inline style artifacts (font-size:14px etc)
-    text = re.sub(r"[a-z\-]+:[^;\"'\s]+;?", " ", text)
     # collapse whitespace
     text = re.sub(r"\s+", " ", text).strip()
     return text
@@ -298,10 +296,12 @@ def render_job_card(job):
     platform = job.get("apply_platform", "direct")
     is_remote = job.get("is_remote", 0)
     location = "🌐 Remote" if is_remote else f"📍 {job.get('location', '')}"
-    # Strip HTML from reasoning completely — works on any format
+    # Clean reasoning then HTML-escape it so it never gets interpreted as HTML
     _raw = job.get("reasoning", "") or ""
-    _clean = strip_html(_raw)
-    reasoning_display = (_clean[:200] + "...") if len(_clean) > 200 else _clean
+    _clean = clean_reasoning(_raw)
+    _truncated = (_clean[:200] + "...") if len(_clean) > 200 else _clean
+    # html.escape ensures any remaining < > & chars render as text, never as tags
+    reasoning_display = html.escape(_truncated)
     salary_min = job.get("salary_min")
     salary_max = job.get("salary_max")
     salary = ""
