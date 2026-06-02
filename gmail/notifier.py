@@ -20,6 +20,8 @@ EMAIL_TYPES = {
     "IRRELEVANT": "Not related to job applications",
 }
 
+YOUR_EMAIL = "rakibabente8@gmail.com"
+
 
 def classify_email(email_content: dict) -> dict:
     """Classify email using keywords — no API needed"""
@@ -27,6 +29,11 @@ def classify_email(email_content: dict) -> dict:
     body = email_content.get("body", "").lower()
     sender = email_content.get("from", "").lower()
     text = subject + " " + body
+
+    # ignore self-sent notification emails (agent emailing itself)
+    if YOUR_EMAIL.lower() in sender:
+        return {"type": "IRRELEVANT", "confidence": 99,
+                "company": "", "role": "", "action_needed": "", "urgent": False}
 
     # Must be job-related first — filter out obvious noise
     job_signals = ["application", "applied", "position", "role", "opportunity",
@@ -82,8 +89,8 @@ def send_notification(subject: str, message: str, service):
     from email.mime.text import MIMEText
 
     msg = MIMEText(message)
-    msg["to"] = "Rakibabente8@gmail.com"
-    msg["from"] = "Rakibabente8@gmail.com"
+    msg["to"] = YOUR_EMAIL
+    msg["from"] = YOUR_EMAIL
     msg["subject"] = subject
 
     raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
@@ -95,7 +102,7 @@ def send_notification(subject: str, message: str, service):
 
 
 def build_sms_message(classification: dict, email_content: dict) -> str:
-    """Build a concise SMS message based on email classification"""
+    """Build a concise message based on email classification"""
     email_type = classification.get("type")
     company = classification.get("company", "Unknown Company")
     role = classification.get("role", "Unknown Role")
