@@ -148,6 +148,8 @@ GREENHOUSE_COMPANIES = [
 ]
 
 
+MAX_JOBS_PER_COMPANY = 5  # max jobs per company per run for diversity
+
 def fetch_greenhouse_jobs() -> list:
     """Fetch ML/AI jobs directly from Greenhouse public board API — no auth needed"""
     print("  [Greenhouse] Scanning company boards...")
@@ -162,7 +164,10 @@ def fetch_greenhouse_jobs() -> list:
             if resp.status_code != 200:
                 continue
 
+            company_jobs = []
             for job in resp.json().get("jobs", []):
+                if len(company_jobs) >= MAX_JOBS_PER_COMPANY:
+                    break
                 title = job.get("title", "")
                 if not is_relevant(title):
                     continue
@@ -172,7 +177,7 @@ def fetch_greenhouse_jobs() -> list:
                 job_id = job.get("id", "")
                 apply_url = f"https://boards.greenhouse.io/{company}/jobs/{job_id}"
 
-                jobs.append({
+                company_jobs.append({
                     "id": make_job_id(title, company, "greenhouse"),
                     "title": title,
                     "company": company.replace("-", " ").title(),
@@ -190,6 +195,7 @@ def fetch_greenhouse_jobs() -> list:
                     "salary_max": None,
                     "source": "greenhouse_direct"
                 })
+            jobs.extend(company_jobs)
 
         except Exception:
             errors += 1
@@ -259,7 +265,10 @@ def fetch_lever_jobs() -> list:
             if resp.status_code != 200:
                 continue
 
+            company_jobs = []
             for job in resp.json():
+                if len(company_jobs) >= MAX_JOBS_PER_COMPANY:
+                    break
                 title = job.get("text", "")
                 description = job.get("descriptionPlain", "")
                 if not is_relevant(title, description):
@@ -270,7 +279,7 @@ def fetch_lever_jobs() -> list:
                 commitment = categories.get("commitment", "")
                 apply_url = job.get("hostedUrl", "")
 
-                jobs.append({
+                company_jobs.append({
                     "id": make_job_id(title, company, "lever"),
                     "title": title,
                     "company": company.replace("-", " ").title(),
@@ -288,6 +297,7 @@ def fetch_lever_jobs() -> list:
                     "salary_max": None,
                     "source": "lever_direct"
                 })
+            jobs.extend(company_jobs)
 
         except Exception:
             errors += 1
