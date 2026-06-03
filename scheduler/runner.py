@@ -188,20 +188,30 @@ def run_job_discovery():
         # STEP 4: save to DB + generate cover letters
         print("\n[4/5] Saving + generating cover letters...")
         jobs_by_id = {job.get("id", ""): job for job in jobs}
+        cover_letters = {}  # job_id -> cover_letter_text
+
         for scored in scored_jobs:
             original = jobs_by_id.get(scored.get("job_id", ""), scored)
             save_job(original, scored)
 
-        # generate cover letters for top 20
+        # generate cover letters for top 20 — normalize keys first
         top20 = sorted(scored_jobs, key=lambda x: x.get("match_score", 0), reverse=True)[:20]
         generated = 0
         for job in top20:
-            if not already_applied(job.get("company", ""), job.get("job_title", "")):
-                try:
-                    generate_and_save_cover_letter(job, profile)
-                    generated += 1
-                except Exception as e:
-                    print(f"  Cover letter error ({job.get('company')}): {e}")
+            company = job.get("company", "")
+            title = job.get("job_title", "") or job.get("title", "")
+            if already_applied(company, title):
+                continue
+            # normalize keys so cover_letter.py gets what it expects
+            normalized = {**job}
+            normalized["job_title"] = title
+            normalized["job_description"] = job.get("job_description", "") or job.get("description", "")
+            try:
+                cl_text = generate_and_save_cover_letter(normalized, profile)
+                cover_letters[job.get("job_id", "") or job.get("id", "")] = cl_text
+                generated += 1
+            except Exception as e:
+                print(f"  Cover letter error ({company}): {e}")
         print(f"  ✅ {generated} cover letters + resumes generated")
 
         # STEP 5: auto-apply pipeline
@@ -218,16 +228,18 @@ def run_job_discovery():
             applied_today = get_applied_today_count()
             if applied_today >= MAX_AUTO_APPLY_PER_DAY:
                 print(f"\n  🛑 Daily limit reached ({MAX_AUTO_APPLY_PER_DAY}) — stopping auto-apply")
-                # remaining jobs go to manual
                 remaining = [j for j in sorted_jobs if j not in auto_applied]
                 manual.extend(remaining)
                 break
 
             company = job.get("company", "")
-            title = job.get("job_title", "")
+            title = job.get("job_title", "") or job.get("title", "")
             platform = job.get("apply_platform", "direct")
             apply_url = job.get("apply_url", "")
-            cover_letter = job.get("cover_letter_text", "")
+            job_id = job.get("job_id", "") or job.get("id", "")
+
+            # get cover letter — use generated one or fall back to empty string
+            cover_letter = cover_letters.get(job_id, "") or job.get("cover_letter_text", "")
 
             if already_applied(company, title):
                 continue
@@ -237,9 +249,14 @@ def run_job_discovery():
             if job.get("resume_path") and Path(job["resume_path"]).exists():
                 resume_path = job["resume_path"]
 
+            # normalize job keys for apply functions
+            normalized_job = {**job}
+            normalized_job["job_title"] = title
+            normalized_job["job_id"] = job_id
+
             if platform == "greenhouse":
                 result = apply_greenhouse(
-                    job=job, scored_job=job,
+                    job=normalized_job, scored_job=normalized_job,
                     candidate_profile=profile,
                     cover_letter_text=cover_letter,
                     resume_path=resume_path,
@@ -248,16 +265,18 @@ def run_job_discovery():
                 if result.get("success"):
                     auto_applied.append(job)
                     save_application(
-                        job_id=job.get("job_id", ""),
+                        job_id=job_id,
                         company=company, title=title,
                         platform="greenhouse", apply_url=apply_url
                     )
+                    print(f"  ✅ Applied: {title} at {company}")
                 else:
+                    print(f"  ❌ Failed: {title} at {company} — {result.get('error','')}")
                     manual.append(job)
 
             elif platform == "lever":
                 result = apply_lever(
-                    job=job, scored_job=job,
+                    job=normalized_job, scored_job=normalized_job,
                     candidate_profile=profile,
                     cover_letter_text=cover_letter,
                     resume_path=resume_path,
@@ -266,11 +285,13 @@ def run_job_discovery():
                 if result.get("success"):
                     auto_applied.append(job)
                     save_application(
-                        job_id=job.get("job_id", ""),
+                        job_id=job_id,
                         company=company, title=title,
                         platform="lever", apply_url=apply_url
                     )
+                    print(f"  ✅ Applied: {title} at {company}")
                 else:
+                    print(f"  ❌ Failed: {title} at {company} — {result.get('error','')}")
                     manual.append(job)
 
             else:
