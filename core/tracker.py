@@ -526,17 +526,17 @@ def get_stats() -> dict:
 def already_applied(company: str, title: str) -> bool:
     conn = get_connection()
     cursor = conn.cursor()
-    pattern = f"%{title[:20]}%"
+    # Use exact full title match to avoid false positives on similar titles
     if _use_postgres():
         cursor.execute("""
             SELECT COUNT(*) as count FROM applications
-            WHERE LOWER(company) = LOWER(%s) AND LOWER(title) LIKE LOWER(%s)
-        """, (company, pattern))
+            WHERE LOWER(company) = LOWER(%s) AND LOWER(title) = LOWER(%s)
+        """, (company, title))
     else:
         cursor.execute("""
             SELECT COUNT(*) as count FROM applications
-            WHERE LOWER(company) = LOWER(?) AND LOWER(title) LIKE LOWER(?)
-        """, (company, pattern))
+            WHERE LOWER(company) = LOWER(?) AND LOWER(title) = LOWER(?)
+        """, (company, title))
     count = cursor.fetchone()["count"]
     _close(conn, cursor)
     return count > 0

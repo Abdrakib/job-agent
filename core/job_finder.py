@@ -403,6 +403,19 @@ def filter_by_location(jobs: list, work_location: str) -> list:
     return jobs  # any
 
 
+def cap_per_company(jobs: list, max_per_company: int = 5) -> list:
+    """Limit jobs per company to ensure diversity across many companies."""
+    company_counts = {}
+    result = []
+    for job in jobs:
+        company = job.get("company", "").lower()
+        count = company_counts.get(company, 0)
+        if count < max_per_company:
+            company_counts[company] = count + 1
+            result.append(job)
+    return result
+
+
 def find_all_jobs(max_jobs: int = 100, work_location: str = "remote") -> list:
     """
     Main discovery function.
@@ -444,7 +457,11 @@ def find_all_jobs(max_jobs: int = 100, work_location: str = "remote") -> list:
         x.get("source", "")
     ))
 
-    final = filtered[:max_jobs]
+    # cap at 5 jobs per company for diversity
+    diversified = cap_per_company(filtered, max_per_company=5)
+    print(f"After company cap (5/company): {len(diversified)} jobs from {len(set(j.get('company','').lower() for j in diversified))} companies")
+
+    final = diversified[:max_jobs]
     auto_apply_count = len([j for j in final if j.get("apply_platform") in ["greenhouse", "lever"]])
     print(f"Final: {len(final)} jobs | {auto_apply_count} auto-apply ready\n")
 
