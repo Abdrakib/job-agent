@@ -126,19 +126,6 @@ def run_job_discovery():
     # Prevents retries from re-scoring jobs already seen (whether SKIP or APPLY).
     seen_job_ids = set()
 
-    # Pre-load ids already in the DB from previous runs so we never re-score them.
-    try:
-        from core.tracker import get_jobs, init_database
-        init_database()
-        existing = get_jobs(min_score=0, limit=10000)
-        for j in existing:
-            jid = j.get("id", "")
-            if jid:
-                seen_job_ids.add(jid)
-        print(f"[Init] {len(seen_job_ids)} jobs already in DB — will skip these")
-    except Exception as e:
-        print(f"[Init] Could not load existing jobs: {e}")
-
     for attempt in range(1, MAX_ATTEMPTS + 1):
         applied_today = get_applied_today_count()
 
@@ -174,7 +161,7 @@ def run_job_discovery():
             init_database()
 
             max_jobs = int(get_setting("max_jobs_per_run") or 100)
-            min_score = int(get_setting("min_match_score") or 60)
+            min_score = int(get_setting("min_match_score") or 50)
             work_location = get_setting("work_location") or "remote"
 
             print(f"Settings: max={max_jobs}, min_score={min_score}%, location={work_location}")
