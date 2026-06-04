@@ -5,7 +5,7 @@ Pipeline: Discover → Score → Cover Letters → Auto-Apply → Email Report
 import sys
 import os
 from pathlib import Path
-from datetime import datetime, date
+from datetime import datetime
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
 from dotenv import load_dotenv
@@ -13,38 +13,19 @@ from dotenv import load_dotenv
 load_dotenv()
 sys.path.append(str(Path(__file__).parent.parent))
 
+# Force unbuffered output so logs appear in docker logs
+sys.stdout.reconfigure(line_buffering=True)
+
 CANDIDATE_EMAIL = "Rakibabente8@gmail.com"
-DASHBOARD_URL = os.getenv("APP_URL", "web-production-f1ea50.up.railway.app")
+DASHBOARD_URL = os.getenv("APP_URL", "abdourakib.com")
 MAX_AUTO_APPLY_PER_DAY = int(os.getenv("MAX_AUTO_APPLY_PER_DAY", "20"))
 
 
 def get_applied_today_count() -> int:
-    """Count how many applications submitted today"""
+    """Count applications submitted today (ET timezone)."""
     try:
-        from core.tracker import get_connection, _use_postgres
-        conn = get_connection()
-        cur = conn.cursor()
-        today = date.today().isoformat()
-        if _use_postgres():
-            cur.execute(
-                """
-                SELECT COUNT(*) as count FROM applications
-                WHERE date_applied::text LIKE %s
-                """,
-                (f"{today}%",),
-            )
-        else:
-            cur.execute(
-                """
-                SELECT COUNT(*) as count FROM applications
-                WHERE date_applied LIKE ?
-                """,
-                (f"{today}%",),
-            )
-        count = cur.fetchone()["count"]
-        cur.close()
-        conn.close()
-        return count
+        from core.tracker import get_applied_today_count as _count
+        return _count()
     except Exception:
         return 0
 
@@ -349,16 +330,18 @@ def run_all():
 
 
 def start_scheduler():
-    scheduler = BlockingScheduler(timezone="America/New_York")
-    scheduler.add_job(run_all, CronTrigger(hour=8, minute=0), id="daily")
+    # Server runs UTC. 8am ET (EDT=UTC-4) = 12:00 UTC. Use UTC to be explicit.
+    scheduler = BlockingScheduler(timezone="UTC")
+    scheduler.add_job(run_all, CronTrigger(hour=12, minute=0), id="daily")       # 8am ET
     scheduler.add_job(run_inbox_monitor, CronTrigger(hour="*/2", minute=30), id="inbox")
-    scheduler.add_job(run_github_sync, CronTrigger(hour=0, minute=0), id="sync")
+    scheduler.add_job(run_github_sync, CronTrigger(hour=4, minute=0), id="sync")  # midnight ET
 
-    print("🤖 Job Agent Scheduler Running")
+    print("🤖 Job Agent Scheduler Running (UTC timezone)")
     print(f"  Daily limit: {MAX_AUTO_APPLY_PER_DAY} auto-applications/day")
-    print("  8:00 AM — Full pipeline")
+    print("  12:00 UTC (8am ET) — Full pipeline")
     print("  Every 2h — Inbox monitor")
-    print("  Midnight — GitHub sync\n")
+    print("  04:00 UTC (midnight ET) — GitHub sync")
+    print(f"  Server time: {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}\n")
 
     try:
         scheduler.start()

@@ -143,7 +143,7 @@ def save_default_settings():
         "min_salary": "0",
         "show_no_salary": "true",
         "follow_up_days": "7",
-        "max_jobs_per_run": "50",
+        "max_jobs_per_run": "100",
         "auto_apply_platforms": "greenhouse,lever",
         "email_notifications": "true",
         "daily_run_time": "08:00"
@@ -266,24 +266,6 @@ def save_job(job: dict, scored_data: dict = None):
         vals = ",".join(["?"] * 22)
         cursor.execute(upsert_sql.format(vals=vals), params)
 
-    conn.commit()
-    _close(conn, cursor)
-
-
-def save_cover_letter(job_id: str, cover_letter_text: str, resume_path: str = None):
-    """Save generated cover letter text and resume path to job record."""
-    conn = get_connection()
-    cursor = conn.cursor()
-    if _use_postgres():
-        cursor.execute(
-            "UPDATE jobs SET cover_letter_text = %s, resume_path = %s WHERE id = %s",
-            (cover_letter_text, resume_path, job_id),
-        )
-    else:
-        cursor.execute(
-            "UPDATE jobs SET cover_letter_text = ?, resume_path = ? WHERE id = ?",
-            (cover_letter_text, resume_path, job_id),
-        )
     conn.commit()
     _close(conn, cursor)
 
@@ -540,6 +522,52 @@ def already_applied(company: str, title: str) -> bool:
     count = cursor.fetchone()["count"]
     _close(conn, cursor)
     return count > 0
+
+
+def get_applied_today_count() -> int:
+    """Count applications submitted today (ET timezone aware)."""
+    try:
+        from datetime import timezone, timedelta
+        # ET is UTC-4 (EDT) or UTC-5 (EST) — use UTC-4 for safety
+        et_offset = timedelta(hours=-4)
+        et_now = datetime.now(timezone.utc) + et_offset
+        today_et = et_now.strftime("%Y-%m-%d")
+
+        conn = get_connection()
+        cursor = conn.cursor()
+        if _use_postgres():
+            cursor.execute(
+                "SELECT COUNT(*) as count FROM applications WHERE date_applied LIKE %s",
+                (f"{today_et}%",)
+            )
+        else:
+            cursor.execute(
+                "SELECT COUNT(*) as count FROM applications WHERE date_applied LIKE ?",
+                (f"{today_et}%",)
+            )
+        count = cursor.fetchone()["count"]
+        _close(conn, cursor)
+        return count
+    except Exception:
+        return 0
+
+
+def save_cover_letter(job_id: str, cover_letter_text: str, resume_path: str = None):
+    """Save cover letter text and resume path to jobs table."""
+    if not job_id:
+        return
+    conn = get_connection()
+    cursor = conn.cursor()
+    if _use_postgres():
+        cursor.execute("""
+            UPDATE jobs SET cover_letter_text = %s, resume_path = %s WHERE id = %s
+        """, (cover_letter_text, resume_path, job_id))
+    else:
+        cursor.execute("""
+            UPDATE jobs SET cover_letter_text = ?, resume_path = ? WHERE id = ?
+        """, (cover_letter_text, resume_path, job_id))
+    conn.commit()
+    _close(conn, cursor)
 
 
 if __name__ == "__main__":
