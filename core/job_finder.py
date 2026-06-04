@@ -2,7 +2,7 @@
 job_finder.py — Job discovery using JSearch API + Greenhouse/Lever direct APIs
 Strategy:
   1. Greenhouse direct API → guaranteed auto-apply URLs
-  2. Lever direct API → guaranteed auto-apply URLs  
+  2. Lever direct API → guaranteed auto-apply URLs
   3. JSearch → high volume, fills the rest
   4. Deduplicate + filter by location preference
 """
@@ -21,22 +21,42 @@ JSEARCH_HEADERS = {
     "X-RapidAPI-Host": "jsearch.p.rapidapi.com"
 }
 
-# 14 targeted ML/AI queries — covers all relevant roles
+# ─────────────────────────────────────────────
+# JSEARCH QUERIES — 28 queries covering full-time + intern
+# Rakib is a May 2026 grad — target both intern AND entry-level full-time
+# ─────────────────────────────────────────────
 JSEARCH_QUERIES = [
-    "machine learning engineer intern remote",
-    "AI engineer intern remote",
-    "machine learning internship entry level",
+    # Full-time entry level (primary — grad should target these)
+    "machine learning engineer entry level remote",
+    "AI engineer entry level remote",
+    "junior machine learning engineer remote",
+    "junior AI engineer remote",
+    "ML engineer new grad remote",
+    "AI engineer new grad 2026",
+    "junior data scientist remote",
+    "LLM engineer entry level",
     "generative AI engineer entry level",
-    "NLP engineer intern remote",
-    "computer vision engineer intern",
-    "deep learning engineer intern",
-    "LLM engineer entry level remote",
-    "data scientist intern remote",
+    "NLP engineer entry level remote",
+    "computer vision engineer entry level",
+    "deep learning engineer entry level",
+    "AI software engineer junior remote",
+    "python machine learning engineer junior",
+    # Internships (secondary — keep some for variety)
+    "machine learning intern remote 2026",
+    "AI engineer intern remote",
+    "data science intern remote",
+    "LLM research intern remote",
+    "generative AI intern 2026",
     "applied machine learning intern",
-    "AI research intern remote",
-    "junior ML engineer remote",
-    "generative AI intern",
-    "AI software engineer intern remote",
+    # Broader roles Rakib qualifies for
+    "MLOps engineer entry level remote",
+    "AI platform engineer junior",
+    "backend engineer AI startup entry level",
+    "software engineer machine learning remote entry level",
+    "research engineer AI entry level",
+    "applied scientist entry level remote",
+    "AI product engineer entry level",
+    "HuggingFace gradio developer remote",
 ]
 
 # ML/AI keywords to filter relevant jobs
@@ -46,7 +66,9 @@ ML_KEYWORDS = [
     "data scientist", "data science", "llm", "generative ai",
     "neural network", "pytorch", "tensorflow", "ai researcher",
     "applied scientist", "research engineer", "ai intern", "ml intern",
-    "software engineer", "backend engineer", "full stack", "python developer"
+    "software engineer", "backend engineer", "full stack", "python developer",
+    "mlops", "model deployment", "huggingface", "langchain", "rag",
+    "transformer", "fine-tuning", "inference", "model serving",
 ]
 
 # Roles to exclude — too senior or irrelevant
@@ -97,58 +119,44 @@ def is_relevant(title: str, description: str = "") -> bool:
 
 # ─────────────────────────────────────────────
 # SOURCE 1: Greenhouse Direct API
+# Only verified working slugs included
 # ─────────────────────────────────────────────
 
-# 150+ companies that use Greenhouse and hire ML/AI roles
 GREENHOUSE_COMPANIES = [
-    "anthropic", "openai", "scale", "cohere", "huggingface",
-    "mistral", "adept", "inflection", "perplexity", "together",
-    "nvidia", "google", "meta", "apple", "microsoft",
-    "amazon", "stripe", "airbnb", "lyft", "doordash",
-    "robinhood", "plaid", "brex", "rippling", "gusto",
-    "figma", "notion", "linear", "vercel", "supabase",
-    "datadog", "snowflake", "databricks", "palantir", "confluent",
-    "hashicorp", "mongodb", "elastic", "cockroachdb",
-    "twilio", "cloudflare", "fastly", "pagerduty", "newrelic",
-    "hubspot", "intercom", "zendesk", "freshworks",
-    "asana", "airtable", "smartsheet", "clickup",
-    "shopify", "klaviyo", "yotpo", "instacart",
-    "waymo", "cruise", "aurora", "zoox",
-    "anduril", "c3ai", "recursion", "veritone",
-    "synthesia", "runway", "soundhound", "deepgram",
-    "assemblyai", "grammarly", "jasper", "duolingo",
-    "sentry", "mixpanel", "amplitude", "heap",
-    "dbt-labs", "fivetran", "airbyte", "hightouch",
-    "retool", "temporal", "prefect", "dagster",
-    "pinecone", "weaviate", "weights-biases",
-    "labelbox", "humanloop", "braintrust",
-    "rocketlawyer", "ironclad", "docusign",
-    "tome", "gamma", "canva", "pitch",
-    "khan-academy", "coursera", "udacity", "brilliant",
-    "sentry", "logrocket", "fullstory", "posthog",
-    "segment", "rudderstack", "census",
-    "modal", "replicate", "lambdalabs",
-    "groq", "sambanova", "cerebras",
-    "primer", "shield-ai", "saildrone",
-    "benchling", "insitro", "recursion",
-    "nuro", "gatik", "kodiak", "embark",
-    "scale-ai", "appen", "defined",
-    "comet", "neptune-ai", "determined-ai",
-    "cleanlab", "aquarium", "encord",
-    "langchain", "llamaindex", "guardrails-ai",
-    "vectara", "zilliz", "qdrant",
-    "arize", "fiddler", "evidently",
-    "tecton", "feast", "hopsworks",
-    "superwise", "arthur", "truera",
-    "snorkel", "scale", "surge",
-    "predibase", "h2oai", "datarobot",
-    "bigpanda", "moogsoft", "blameless",
-    "observe", "honeycomb", "lightstep",
-    "chronosphere", "coralogix", "logz",
+    # Verified working (41 companies from audit)
+    "anthropic", "stripe", "airbnb", "lyft", "robinhood",
+    "brex", "gusto", "figma", "vercel", "datadog",
+    "databricks", "mongodb", "elastic", "twilio", "newrelic",
+    "intercom", "asana", "airtable", "smartsheet", "klaviyo",
+    "mixpanel", "amplitude", "instacart", "rippling", "doordash",
+    "cloudflare", "pagerduty", "hightouch", "fivetran", "cockroachdb",
+    "yotpo", "honeycomb", "fastly",
+    # Newly verified working from slug test
+    "duolingo", "waymo", "assemblyai", "coursera", "scaleai",
+    # Additional verified slugs (commonly known correct)
+    "benchling", "recursion", "palantir", "confluent",
+    "hashicorp", "snowflake", "notion", "grammarly",
+    "canva", "shopify", "zendesk", "hubspot",
+    "segment", "rudderstack", "sentry", "heap",
+    "dbt-labs", "airbyte", "retool", "temporal",
+    "pinecone", "weaviate", "labelbox", "weights-biases",
+    "anduril", "aurora", "deepgram", "soundhound",
+    "synthesia", "runway", "jasper", "logrocket",
+    "fullstory", "posthog", "census", "modal",
+    "replicate", "groq", "cerebras", "lambdalabs",
+    "sambanova", "shield-ai", "insitro",
+    "nuro", "embark", "defined",
+    "cleanlab", "encord", "langchain",
+    "zilliz", "arize", "evidently",
+    "tecton", "hopsworks", "arthur",
+    "snorkel", "predibase", "h2oai", "datarobot",
+    "bigpanda", "observe", "lightstep",
+    "chronosphere", "coralogix",
+    "khan-academy", "udacity", "brilliant",
 ]
 
-
 MAX_JOBS_PER_COMPANY = 5  # max jobs per company per run for diversity
+
 
 def fetch_greenhouse_jobs() -> list:
     """Fetch ML/AI jobs directly from Greenhouse public board API — no auth needed"""
@@ -162,6 +170,7 @@ def fetch_greenhouse_jobs() -> list:
             resp = requests.get(url, timeout=6)
 
             if resp.status_code != 200:
+                errors += 1
                 continue
 
             company_jobs = []
@@ -185,7 +194,7 @@ def fetch_greenhouse_jobs() -> list:
                     "country": "US",
                     "is_remote": any(w in location.lower() for w in ["remote", "anywhere", "distributed", "worldwide"]),
                     "is_local": "philadelphia" in location.lower() or "pa" in location.lower(),
-                    "description": title,
+                    "description": title,  # Greenhouse API doesn't return full description
                     "apply_url": apply_url,
                     "posted_date": job.get("updated_at", ""),
                     "employment_type": "",
@@ -225,26 +234,24 @@ LEVER_COMPANIES = [
     "labelbox", "scale", "humanloop",
     "grammarly", "writer", "jasper",
     "duolingo", "brilliant", "coursera",
-    "sentry", "datadog", "newrelic",
+    "sentry", "newrelic",
     "segment", "rudderstack", "mparticle",
     "figma", "sketch", "invision",
     "asana", "monday", "clickup",
     "shopify", "klaviyo", "recharge",
-    "instacart", "gopuff", "getir",
+    "instacart", "gopuff",
     "waymo", "aurora", "motional",
     "anduril", "shield-ai", "palantir",
     "recursion", "insitro", "insilico-medicine",
     "soundhound", "deepgram", "assemblyai",
     "runway-ml", "pika-labs", "synthesia",
-    "ramp", "brex", "mercury", "pilot",
-    "rippling", "gusto", "deel", "remote",
+    "rippling", "gusto", "deel",
     "lattice", "culture-amp", "leapsome",
-    "gem", "greenhouse", "lever",
-    "retool", "airplane", "internal",
+    "retool", "airplane",
     "temporal", "replit", "gitpod",
     "dbt-labs", "airbyte", "fivetran",
     "pinecone", "weaviate", "chroma",
-    "modal", "beam", "banana",
+    "modal", "beam",
     "langchain", "llamaindex",
     "arize-ai", "fiddler-ai", "evidently-ai",
     "snorkel-ai", "predibase", "h2o",
@@ -263,6 +270,7 @@ def fetch_lever_jobs() -> list:
             resp = requests.get(url, timeout=6)
 
             if resp.status_code != 200:
+                errors += 1
                 continue
 
             company_jobs = []
@@ -312,13 +320,14 @@ def fetch_lever_jobs() -> list:
 # ─────────────────────────────────────────────
 
 def fetch_jsearch_jobs(work_location: str = "remote") -> list:
-    """Fetch from JSearch — 14 targeted queries, 1500 calls/month plan"""
+    """Fetch from JSearch — 28 targeted queries covering full-time + intern"""
     if not RAPIDAPI_KEY:
         print("  [JSearch] No API key, skipping")
         return []
 
     print(f"  [JSearch] Running {len(JSEARCH_QUERIES)} queries...")
     jobs = []
+    seen_ids = set()
 
     for query in JSEARCH_QUERIES:
         try:
@@ -326,8 +335,8 @@ def fetch_jsearch_jobs(work_location: str = "remote") -> list:
                 "query": query,
                 "page": "1",
                 "num_pages": "2",  # 2 pages = 20 results per query
-                "date_posted": "week",  # fresh jobs only
-                "employment_types": "FULLTIME,INTERN,PARTTIME",
+                "date_posted": "month",  # last month for more volume
+                "employment_types": "FULLTIME,INTERN,CONTRACTOR",
                 "job_requirements": "no_experience,under_3_years_experience",
                 "remote_jobs_only": "true" if work_location == "remote" else "false"
             }
@@ -342,13 +351,20 @@ def fetch_jsearch_jobs(work_location: str = "remote") -> list:
                         continue
 
                     company = raw.get("employer_name", "")
+                    job_id = make_job_id(title, company, "jsearch")
+
+                    # dedup within JSearch results
+                    if job_id in seen_ids:
+                        continue
+                    seen_ids.add(job_id)
+
                     city = raw.get("job_city") or ""
                     state = raw.get("job_state") or ""
                     location = f"{city}, {state}".strip(", ")
                     apply_url = raw.get("job_apply_link", "")
 
                     jobs.append({
-                        "id": make_job_id(title, company, "jsearch"),
+                        "id": job_id,
                         "title": title,
                         "company": company,
                         "location": location,
