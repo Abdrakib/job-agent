@@ -570,6 +570,23 @@ def save_cover_letter(job_id: str, cover_letter_text: str, resume_path: str = No
     _close(conn, cursor)
 
 
+class JobTracker:
+    def get_applied_today_count(self): return get_applied_today_count()
+    def save_cover_letter(self, *a, **kw): return save_cover_letter(*a, **kw)
+    def save_job(self, *a, **kw): return save_job(*a, **kw)
+    def save_application(self, *a, **kw): return save_application(*a, **kw)
+    def update_application_status(self, *a, **kw): return update_application_status(*a, **kw)
+    def get_applications(self, *a, **kw): return get_applications(*a, **kw)
+    def get_jobs(self, *a, **kw): return get_jobs(*a, **kw)
+    def get_stats(self): return get_stats()
+    def already_applied(self, *a, **kw): return already_applied(*a, **kw)
+    def get_pending_follow_ups(self): return get_pending_follow_ups()
+    def mark_follow_up_sent(self, *a, **kw): return mark_follow_up_sent(*a, **kw)
+    def get_documents(self, *a, **kw): return get_documents(*a, **kw)
+    def get_setting(self, *a, **kw): return get_setting(*a, **kw)
+    def save_setting(self, *a, **kw): return save_setting(*a, **kw)
+
+
 if __name__ == "__main__":
     print("Initializing database...")
     init_database()
