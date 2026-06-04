@@ -108,12 +108,36 @@ def run_job_discovery():
     Full pipeline with retry loop.
     Runs up to 5 times until at least 10 applications submitted today.
     Daily limit: MAX_AUTO_APPLY_PER_DAY applications.
+
+    Key design decisions:
+    - seen_job_ids: tracks every job id scored this session (across all attempts).
+      Skipped jobs are never re-scored in retries — retries only process NEW jobs.
+    - save_job receives a merged dict so id + match_score are always both present.
+    - scored dict is used directly for cover letters (has job_id, job_title, job_description).
+    - already_applied() gates both cover letter generation and auto-apply.
     """
     MIN_APPLY_PER_DAY = 10
     MAX_ATTEMPTS = 5
 
     all_auto_applied = []
     all_manual = []
+
+    # Tracks job ids scored across ALL attempts this session.
+    # Prevents retries from re-scoring jobs already seen (whether SKIP or APPLY).
+    seen_job_ids = set()
+
+    # Pre-load ids already in the DB from previous runs so we never re-score them.
+    try:
+        from core.tracker import get_jobs, init_database
+        init_database()
+        existing = get_jobs(min_score=0, limit=10000)
+        for j in existing:
+            jid = j.get("id", "")
+            if jid:
+                seen_job_ids.add(jid)
+        print(f"[Init] {len(seen_job_ids)} jobs already in DB — will skip these")
+    except Exception as e:
+        print(f"[Init] Could not load existing jobs: {e}")
 
     for attempt in range(1, MAX_ATTEMPTS + 1):
         applied_today = get_applied_today_count()
@@ -161,50 +185,84 @@ def run_job_discovery():
             profile = get_candidate_profile()
             print(f"  ✅ {profile.get('name')}")
 
-            # STEP 2: discover jobs
+            # STEP 2: discover jobs — then filter out already-seen ones
             print("\n[2/5] Discovering jobs...")
-            jobs = find_all_jobs(max_jobs=max_jobs, work_location=work_location)
-            gh_count = len([j for j in jobs if j.get("apply_platform") == "greenhouse"])
-            lv_count = len([j for j in jobs if j.get("apply_platform") == "lever"])
-            print(f"  ✅ {len(jobs)} jobs | Greenhouse: {gh_count} | Lever: {lv_count}")
+            all_jobs = find_all_jobs(max_jobs=max_jobs, work_location=work_location)
+            gh_count = len([j for j in all_jobs if j.get("apply_platform") == "greenhouse"])
+            lv_count = len([j for j in all_jobs if j.get("apply_platform") == "lever"])
+            print(f"  ✅ {len(all_jobs)} jobs found | Greenhouse: {gh_count} | Lever: {lv_count}")
+
+            # Filter: remove jobs already seen this session or in DB from previous runs
+            jobs = [j for j in all_jobs if j.get("id", "") not in seen_job_ids]
+            print(f"  ✅ {len(jobs)} new jobs after filtering already-seen ({len(all_jobs) - len(jobs)} skipped)")
+
+            if not jobs:
+                print("  No new jobs to score — stopping retries")
+                break
 
             # STEP 3: score with Claude
             print("\n[3/5] Scoring jobs with Claude...")
             scored_jobs = score_all_jobs(jobs, profile, min_score=min_score)
-            print(f"  ✅ {len(scored_jobs)} qualified")
+
+            # Mark ALL discovered jobs as seen (not just qualified ones)
+            # so retries never re-score skipped jobs
+            for j in jobs:
+                jid = j.get("id", "")
+                if jid:
+                    seen_job_ids.add(jid)
+
+            print(f"  ✅ {len(scored_jobs)} qualified out of {len(jobs)} scored")
 
             if not scored_jobs:
-                print("  No qualified jobs — stopping retries")
-                break
+                print("  No qualified jobs this attempt — will retry with fresh discovery")
+                continue  # don't break — retry with new jobs
 
             # STEP 4: save to DB + generate cover letters
+            # FIX: merge original_job + scored so save_job always has both
+            # 'id' (from original) and 'match_score' (from scored).
+            # scored dict is used directly for cover letters since it already
+            # has job_id, job_title, job_description in the right keys.
             print("\n[4/5] Saving + generating cover letters...")
             jobs_by_id = {job.get("id", ""): job for job in jobs}
             cover_letters = {}
 
             for scored in scored_jobs:
-                original_job = jobs_by_id.get(scored.get("job_id", ""), scored)
-                save_job(original_job, scored)
+                # Get original job to have the 'id' field save_job needs
+                original_job = jobs_by_id.get(scored.get("job_id", ""), {})
+                # Merge: original fields first, then scored fields on top.
+                # This guarantees 'id' comes from original and 'match_score'
+                # comes from scored. If lookup fails, job_id is used as id.
+                merged = {**original_job, **scored}
+                if not merged.get("id"):
+                    merged["id"] = scored.get("job_id", "")
+                save_job(merged, scored)
 
+            # Generate cover letters using scored dict directly —
+            # it already has job_id, job_title, job_description
             top20 = sorted(scored_jobs, key=lambda x: x.get("match_score", 0), reverse=True)[:20]
             generated = 0
             for job in top20:
                 company = job.get("company", "")
-                title = job.get("job_title", "") or job.get("title", "")
+                job_id = job.get("job_id", "")
+                title = job.get("job_title", "")
+
                 if already_applied(company, title):
                     continue
-                normalized = {**job}
-                normalized["job_title"] = title
-                normalized["job_description"] = job.get("job_description", "") or job.get("description", "")
+
+                # scored dict already has job_title and job_description set
+                # by the scorer — no need to re-normalize
                 try:
-                    cl_text = generate_and_save_cover_letter(normalized, profile)
-                    cover_letters[job.get("job_id", "") or job.get("id", "")] = cl_text
+                    cl_text = generate_and_save_cover_letter(job, profile)
+                    cover_letters[job_id] = cl_text
                     generated += 1
+                    print(f"  📝 Cover letter: {title} at {company}")
                 except Exception as e:
-                    print(f"  Cover letter error ({company}): {e}")
+                    print(f"  ❌ Cover letter error ({company} — {title}): {e}")
+
             print(f"  ✅ {generated} cover letters + resumes generated")
 
             # STEP 5: auto-apply pipeline
+            # Sort: greenhouse first (most reliable), then lever, then direct
             print(f"\n[5/5] Auto-apply pipeline (limit: {MAX_AUTO_APPLY_PER_DAY}/day)...")
             sorted_jobs = sorted(scored_jobs, key=lambda x: (
                 0 if x.get("apply_platform") == "greenhouse" else
@@ -220,19 +278,26 @@ def run_job_discovery():
                     break
 
                 company = job.get("company", "")
-                title = job.get("job_title", "") or job.get("title", "")
+                title = job.get("job_title", "")
                 platform = job.get("apply_platform", "direct")
                 apply_url = job.get("apply_url", "")
-                job_id = job.get("job_id", "") or job.get("id", "")
+                job_id = job.get("job_id", "")
                 cover_letter = cover_letters.get(job_id, "") or job.get("cover_letter_text", "")
 
                 if already_applied(company, title):
+                    continue
+
+                if not cover_letter:
+                    print(f"  ⚠️  No cover letter for {title} at {company} — skipping auto-apply")
+                    manual.append(job)
                     continue
 
                 resume_path = "data/base_resume.pdf"
                 if job.get("resume_path") and Path(job["resume_path"]).exists():
                     resume_path = job["resume_path"]
 
+                # normalized_job uses scored keys (job_title, job_id) which
+                # apply_greenhouse and apply_lever both expect
                 normalized_job = {**job}
                 normalized_job["job_title"] = title
                 normalized_job["job_id"] = job_id
@@ -251,7 +316,7 @@ def run_job_discovery():
                                          platform="greenhouse", apply_url=apply_url)
                         print(f"  ✅ Applied: {title} at {company}")
                     else:
-                        print(f"  ❌ Failed: {title} at {company} — {result.get('error','')}")
+                        print(f"  ❌ Failed: {title} at {company} — {result.get('error', '') or result.get('reason', '')}")
                         manual.append(job)
 
                 elif platform == "lever":
@@ -268,7 +333,7 @@ def run_job_discovery():
                                          platform="lever", apply_url=apply_url)
                         print(f"  ✅ Applied: {title} at {company}")
                     else:
-                        print(f"  ❌ Failed: {title} at {company} — {result.get('error','')}")
+                        print(f"  ❌ Failed: {title} at {company} — {result.get('error', '') or result.get('reason', '')}")
                         manual.append(job)
 
                 else:
@@ -293,6 +358,7 @@ def run_job_discovery():
 
     # send final daily report
     try:
+        from core.tracker import get_stats
         stats = get_stats()
         print(f"\n{'='*60}")
         print(f"✅ PIPELINE COMPLETE — {len(all_auto_applied)} total applied today")
@@ -300,6 +366,7 @@ def run_job_discovery():
         send_daily_report(all_auto_applied, all_manual, stats)
     except Exception as e:
         print(f"❌ Final report failed: {e}")
+
 
 def run_inbox_monitor():
     """Check Gmail for replies"""
@@ -330,11 +397,11 @@ def run_all():
 
 
 def start_scheduler():
-    # Server runs UTC. 8am ET (EDT=UTC-4) = 12:00 UTC. Use UTC to be explicit.
+    # Server runs UTC. 8am ET (EDT=UTC-4) = 12:00 UTC.
     scheduler = BlockingScheduler(timezone="UTC")
-    scheduler.add_job(run_all, CronTrigger(hour=12, minute=0), id="daily")       # 8am ET
+    scheduler.add_job(run_all, CronTrigger(hour=12, minute=0), id="daily")
     scheduler.add_job(run_inbox_monitor, CronTrigger(hour="*/2", minute=30), id="inbox")
-    scheduler.add_job(run_github_sync, CronTrigger(hour=4, minute=0), id="sync")  # midnight ET
+    scheduler.add_job(run_github_sync, CronTrigger(hour=4, minute=0), id="sync")
 
     print("🤖 Job Agent Scheduler Running (UTC timezone)")
     print(f"  Daily limit: {MAX_AUTO_APPLY_PER_DAY} auto-applications/day")
