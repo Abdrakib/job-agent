@@ -239,37 +239,13 @@ def fetch_greenhouse_jobs() -> list:
 # ─────────────────────────────────────────────
 
 LEVER_COMPANIES = [
-    # Verified working from Lever audit
-    "mistral", "openai", "cohere", "anthropic",
-    "scale-ai", "stability-ai", "aleph-alpha",
-    "stripe", "plaid", "brex", "mercury", "ramp",
-    "notion", "linear", "vercel", "netlify", "render", "railway",
-    "cloudflare", "fastly",
-    "datadog", "grafana", "elastic",
-    "mongodb", "redis", "neo4j",
-    "huggingface", "together-ai", "replicate",
-    "weights-biases", "neptune-ai",
-    "labelbox", "humanloop",
-    "grammarly", "writer",
-    "duolingo", "coursera",
-    "sentry", "newrelic",
-    "segment", "rudderstack",
-    "figma", "asana", "monday",
-    "shopify", "klaviyo",
-    "instacart",
-    "waymo", "aurora",
-    "anduril", "palantir",
-    "recursion", "insitro",
-    "soundhound", "deepgram", "assemblyai",
-    "runway-ml", "synthesia",
-    "rippling", "gusto", "deel",
-    "lattice", "culture-amp",
-    "retool", "replit", "gitpod",
-    "dbt-labs", "airbyte", "fivetran",
-    "pinecone", "weaviate", "chroma",
-    "modal", "langchain", "llamaindex",
-    "arize-ai", "fiddler-ai",
-    "snorkel-ai", "predibase", "h2o",
+    "mistral",    # 171 jobs
+    "zoox",       # 214 jobs
+    "spotify",    # 144 jobs
+    "outreach",   # 32 jobs
+    "anyscale",   # 1 job
+    "atlassian",  # verify this one
+    "palantir",   # 228 jobs (from earlier test)
 ]
 
 
@@ -338,7 +314,7 @@ def fetch_lever_jobs() -> list:
 # ─────────────────────────────────────────────
 
 ASHBY_COMPANIES = [
-    # Verified working with job counts (tested 2026-06-08)
+    # Batch 1 verified
     "openai",        # 718 jobs
     "elevenlabs",    # 151 jobs
     "notion",        # 145 jobs
@@ -354,7 +330,6 @@ ASHBY_COMPANIES = [
     "modal",         # 31 jobs
     "fireworks-ai",  # 27 jobs
     "roboflow",      # 26 jobs
-    "linear",        # 24 jobs
     "render",        # 23 jobs
     "astronomer",    # 22 jobs
     "posthog",       # 16 jobs
@@ -372,6 +347,20 @@ ASHBY_COMPANIES = [
     "prefect",       # 5 jobs
     "runway",        # 4 jobs
     "hightouch",     # 1 job
+    # Batch 2 verified
+    "ramp",          # 112 jobs
+    "vanta",         # 110 jobs
+    "cerebras",      # 105 jobs
+    "replit",        # 98 jobs
+    "clickup",       # 63 jobs
+    "drata",         # 53 jobs
+    "benchling",     # 50 jobs
+    "insitro",       # 12 jobs
+    "moderntreasury",# 7 jobs
+    # Batch 3 verified
+    "temporal",      # 50 jobs
+    "linear",        # 25 jobs
+    "airbyte",       # 8 jobs
 ]
 
 
