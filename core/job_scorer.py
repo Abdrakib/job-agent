@@ -8,7 +8,7 @@ load_dotenv()
 
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
-# Jobs with these keywords in title are pre-filtered out — not relevant to Rakib
+# Jobs with these keywords in title are pre-filtered out
 TITLE_BLACKLIST = [
     "physics", "chemistry", "biology", "biomedical", "genomics", "drug discovery",
     "life sciences", "clinical", "healthcare", "medical", "radiology", "pathology",
@@ -20,30 +20,44 @@ TITLE_BLACKLIST = [
     "graduate chemistry", "graduate physics", "graduate math",
 ]
 
-# Companies known for spam/low-quality listings
+# Staffing agencies, annotation farms, and low-quality companies
+# These spam job boards with fake or irrelevant listings
 COMPANY_BLACKLIST = [
+    # Annotation / AI data labeling farms
     "dataannotation", "data annotation", "virtualvocations", "virtual vocations",
-    "clickworker", "remotasks", "scale ai annotator",
+    "clickworker", "remotasks", "scale ai annotator", "appen",
+    "lionbridge", "telus", "defined crowd", "taskus",
+    # Staffing agencies
+    "synergisticit", "jobot", "cybercoders", "kforce", "teksystems",
+    "insight global", "apex systems", "modis", "experis",
+    "manpower", "randstad", "robert half", "kelly services",
+    "staffmark", "adecco", "spherion", "aerotek",
+    "wfhforgeon", "feedinkoo", "sc works trident",
+    # Offshore dev shops
+    "infosys", "wipro", "hcl technologies", "tech mahindra",
+    "cognizant", "mphasis", "ltimindtree", "hexaware",
+    "virtusa", "softserve", "epam", "luxoft", "mindtree",
+    # Job aggregators masquerading as employers
+    "jobot", "ziprecruiter employer", "indeed employer",
+    "wfh", "work from home jobs", "virtual vocations",
+    "remotemore", "partech partners", "agileengine",
 ]
 
 
 def is_relevant_job(job: dict) -> bool:
-    """Pre-filter jobs before sending to Claude. Returns False if job should be skipped."""
+    """Pre-filter jobs before sending to Claude."""
     title = (job.get("title") or "").lower()
     company = (job.get("company") or "").lower()
     description = (job.get("description") or "").lower()
 
-    # check title blacklist
     for kw in TITLE_BLACKLIST:
         if kw in title:
             return False
 
-    # check company blacklist
     for kw in COMPANY_BLACKLIST:
         if kw in company:
             return False
 
-    # skip jobs requiring PhD
     phd_signals = ["phd required", "phd students only", "must be enrolled in phd",
                    "pursuing a phd", "doctoral students", "phd candidate required"]
     for signal in phd_signals:
@@ -58,7 +72,6 @@ def score_job(job: dict, candidate_profile: dict, all_projects: dict) -> dict:
     Claude scores a single job against Rakib's profile.
     Returns match score, best projects to highlight, and reasoning.
     """
-
     dedicated_repos = all_projects["dedicated_repos"]
     mono_projects = all_projects["mono_repo_projects"]
 
@@ -78,12 +91,12 @@ def score_job(job: dict, candidate_profile: dict, all_projects: dict) -> dict:
     for cat, names in categories.items():
         project_summary += f"- {cat}: {', '.join(names[:5])}\n"
 
-    prompt = f"""You are an expert recruiter scoring a job for this specific candidate. Be accurate and strict.
+    prompt = f"""You are an expert recruiter scoring a job for this specific candidate. Be accurate and fair.
 
 CANDIDATE PROFILE:
 Name: {candidate_profile.get('name')}
 Education: Associate's degree in Computer Science (Community College of Philadelphia, May 2026)
-Experience: ML Intern at Buildawn Labs (computer vision, LLMs, RL). Currently DSP worker.
+Experience: ML Intern at Buildawn Labs (computer vision, LLMs, RL). 50+ ML/AI projects deployed.
 Skills: {json.dumps(candidate_profile.get('skills', {}))}
 Summary: {candidate_profile.get('summary')}
 
@@ -99,9 +112,12 @@ Description: {job.get('description', '')[:2000]}
 IMPORTANT SCORING RULES — apply these strictly:
 1. If the job requires a PhD or is for PhD students only → score 0-20, recommend SKIP
 2. If the job is in a domain Rakib has no background in (physics, chemistry, biology, finance/quant, hardware) → score 0-35, recommend SKIP even if it mentions ML/AI
-3. If the job requires 3+ years of experience and isn't entry-level/intern → score below 50
-4. Strong fits: ML engineering, AI engineering, NLP, computer vision, LLM/generative AI, data science, AI agents, autonomous systems
-5. The candidate has an Associate's degree only — be realistic about company fit
+3. If the job explicitly requires 5+ years of experience → score below 40
+4. If the job requires 3-4 years experience but the role matches Rakib's skills well → score 45-55 (borderline)
+5. Strong fits: ML engineering, AI engineering, NLP, computer vision, LLM/generative AI, data science, AI agents, RAG systems, MLOps, Python/FastAPI backend for AI products
+6. Entry-level, junior, new grad, or intern roles that match Rakib's skills → score 65-85
+7. The candidate has strong project portfolio (50+ projects, HuggingFace deployments, production agents) → weight this heavily for junior roles
+8. Associate's degree is fine for startup/tech company roles — do NOT penalize heavily for this
 
 Return ONLY a JSON object with no markdown or extra text:
 {{
@@ -124,8 +140,8 @@ Scoring guide:
 - 90-100: Perfect match, apply immediately
 - 75-89: Strong match, definitely apply
 - 60-74: Good match, worth applying
-- 40-59: Partial match, borderline
-- 0-39: Poor match or domain mismatch, skip
+- 50-59: Partial match, borderline — apply if entry-level
+- 0-49: Poor match or domain mismatch, skip
 
 Select exactly 3-5 best projects from the candidate's portfolio that match this specific job."""
 
@@ -165,7 +181,6 @@ def score_all_jobs(jobs: list[dict], candidate_profile: dict, min_score: int = 7
     """
     all_projects = get_all_projects()
 
-    # pre-filter before hitting Claude API
     relevant_jobs = [j for j in jobs if is_relevant_job(j)]
     filtered_out = len(jobs) - len(relevant_jobs)
     print(f"Pre-filter: removed {filtered_out} irrelevant jobs, {len(relevant_jobs)} remaining\n")
@@ -188,7 +203,6 @@ def score_all_jobs(jobs: list[dict], candidate_profile: dict, min_score: int = 7
             continue
 
     scored_jobs.sort(key=lambda x: x.get("match_score", 0), reverse=True)
-
     qualified = [j for j in scored_jobs if j.get("match_score", 0) >= min_score]
 
     print(f"\nScoring complete:")
@@ -210,7 +224,7 @@ if __name__ == "__main__":
     jobs = find_all_jobs(max_jobs=5)
 
     print("\nScoring jobs...")
-    scored = score_all_jobs(jobs, profile, min_score=60)
+    scored = score_all_jobs(jobs, profile, min_score=50)
 
     print("\n--- TOP MATCHES ---")
     for job in scored[:5]:

@@ -1,13 +1,13 @@
 """
 job_finder.py — Job discovery using JSearch API + Greenhouse/Lever/Ashby direct APIs
 Strategy:
-  1. Greenhouse direct API → guaranteed auto-apply URLs (33 verified companies)
+  1. Greenhouse direct API → guaranteed auto-apply URLs (verified companies only)
   2. Lever direct API → guaranteed auto-apply URLs (verified companies only)
-  3. Ashby direct API → guaranteed auto-apply URLs (33 verified companies)
+  3. Ashby direct API → guaranteed auto-apply URLs (verified companies only)
   4. JSearch → high volume from Indeed, LinkedIn, Glassdoor, ZipRecruiter + more
   5. Deduplicate + filter by location preference
 
-ALL company slugs in this file are verified working.
+ALL company slugs in this file are verified working as of 2026-06-13.
 Do NOT add slugs without testing first.
 """
 import requests
@@ -29,7 +29,7 @@ MAX_JOBS_PER_COMPANY = 5
 
 
 # ─────────────────────────────────────────────
-# ML/AI KEYWORDS
+# ML/AI KEYWORDS — used to filter relevant jobs
 # ─────────────────────────────────────────────
 
 ML_KEYWORDS = [
@@ -41,6 +41,9 @@ ML_KEYWORDS = [
     "software engineer", "backend engineer", "full stack", "python developer",
     "mlops", "model deployment", "huggingface", "langchain", "rag",
     "transformer", "fine-tuning", "inference", "model serving",
+    "prompt engineer", "ai developer", "ml developer", "ai ops",
+    "foundation model", "large language model", "vector database",
+    "retrieval augmented", "diffusion model", "multimodal",
 ]
 
 EXCLUDE_KEYWORDS = [
@@ -52,20 +55,35 @@ EXCLUDE_KEYWORDS = [
     "recruiter", "hr ", "accounting", "legal", "financial analyst"
 ]
 
+# Staffing agencies and job aggregators — pre-filtered out
+JUNK_COMPANIES = {
+    "wfhforgeon", "sc works", "synergisticit", "jobot", "feedinkoo",
+    "cybercoders", "kforce", "teksystems", "insight global", "cognizant",
+    "infosys", "wipro", "hcl", "accenture federal", "booz allen",
+    "leidos", "saic", "general dynamics", "manpower", "randstad",
+    "robert half", "staffing", "recruiting solutions", "talent bridge",
+    "apex systems", "modis", "experis", "mindtree", "hexaware",
+    "mphasis", "ltimindtree", "tech mahindra", "virtusa",
+    "wfh", "work from home", "virtual vocations", "remotemore",
+    "partech", "agileengine", "softserve", "epam", "luxoft",
+}
+
+
 # ─────────────────────────────────────────────
-# JSEARCH QUERIES
-# JSearch aggregates Indeed, LinkedIn, Glassdoor,
-# ZipRecruiter, Dice, SimplyHired and more in one call.
-# 28 queries x 2 pages x 10 results = up to 560 raw jobs
-# Top 8 queries get an extra page 3 for more volume
+# JSEARCH QUERIES — 50 targeted queries
+# Covers: entry level, new grad, intern, junior,
+# specific roles, specific skills, specific companies
+# Each query fetches 2-3 pages = 20-30 results
+# Total potential: 50 queries × 25 avg = ~1250 raw results
 # ─────────────────────────────────────────────
+
 JSEARCH_QUERIES = [
-    # Full-time entry level — primary target as May 2026 grad
+    # ── Entry level / new grad full-time ──
     "machine learning engineer entry level remote",
     "AI engineer entry level remote",
     "junior machine learning engineer remote",
     "junior AI engineer remote",
-    "ML engineer new grad remote",
+    "ML engineer new grad 2026 remote",
     "AI engineer new grad 2026",
     "junior data scientist machine learning remote",
     "LLM engineer entry level remote",
@@ -74,35 +92,65 @@ JSEARCH_QUERIES = [
     "computer vision engineer entry level remote",
     "deep learning engineer entry level",
     "AI software engineer junior remote",
-    "python machine learning engineer junior remote",
-    # Broader roles Rakib qualifies for
+    "python machine learning engineer junior",
     "MLOps engineer entry level remote",
     "AI platform engineer junior remote",
     "software engineer machine learning remote entry level",
     "research engineer AI entry level remote",
     "applied scientist entry level remote",
     "AI product engineer entry level remote",
+
+    # ── Specific skills Rakib has ──
     "PyTorch engineer entry level remote",
-    "HuggingFace developer remote entry level",
-    # Internships — secondary
+    "HuggingFace developer remote",
+    "RAG engineer entry level remote",
+    "LLM application developer junior remote",
+    "Gradio Streamlit AI developer remote",
+    "FastAPI machine learning engineer remote",
+    "vector database engineer entry level remote",
+    "prompt engineer entry level remote",
+    "AI agent developer junior remote",
+    "multimodal AI engineer entry level",
+
+    # ── Internships ──
     "machine learning intern remote 2026",
     "AI engineer intern remote 2026",
     "data science intern remote 2026",
-    "LLM research intern remote",
+    "LLM research intern remote 2026",
     "generative AI intern 2026",
     "applied machine learning intern remote",
+    "computer vision intern remote 2026",
+    "NLP intern remote 2026",
+    "AI research intern 2026",
+    "software engineering intern AI ML 2026",
+
+    # ── Targeted at real tech companies via JSearch ──
+    "machine learning engineer startup remote entry level",
+    "AI engineer Series A Series B startup remote",
+    "junior software engineer AI startup remote 2026",
+    "machine learning engineer fintech remote entry level",
+    "AI engineer healthcare startup remote entry level",
+    "backend engineer Python AI tools remote entry level",
+    "full stack engineer AI product remote junior",
+    "data engineer machine learning pipeline remote entry level",
+    "MLOps DevOps AI engineer remote junior",
+    "AI infrastructure engineer entry level remote",
 ]
 
-# These top queries get an extra page for more volume
+# Top queries get 3 pages instead of 2 for more volume
 JSEARCH_HIGH_VOLUME_QUERIES = {
     "machine learning engineer entry level remote",
     "AI engineer entry level remote",
     "junior machine learning engineer remote",
-    "ML engineer new grad remote",
+    "ML engineer new grad 2026 remote",
     "LLM engineer entry level remote",
     "generative AI engineer entry level",
     "MLOps engineer entry level remote",
     "software engineer machine learning remote entry level",
+    "machine learning intern remote 2026",
+    "AI engineer intern remote 2026",
+    "junior AI engineer remote",
+    "RAG engineer entry level remote",
 }
 
 
@@ -138,6 +186,12 @@ def detect_platform(url: str) -> str:
     return "direct"
 
 
+def is_junk_company(company: str) -> bool:
+    """Filter out staffing agencies and low-quality job aggregators."""
+    company_lower = company.lower()
+    return any(junk in company_lower for junk in JUNK_COMPANIES)
+
+
 def is_relevant(title: str, description: str = "") -> bool:
     """Check if job is relevant ML/AI role."""
     title_lower = title.lower()
@@ -158,7 +212,6 @@ def is_relevant(title: str, description: str = "") -> bool:
 # ─────────────────────────────────────────────
 
 GREENHOUSE_COMPANIES = [
-    # Core tech (verified working)
     "anthropic", "stripe", "airbnb", "lyft", "robinhood",
     "brex", "gusto", "figma", "vercel", "datadog",
     "databricks", "mongodb", "elastic", "twilio", "newrelic",
@@ -166,7 +219,6 @@ GREENHOUSE_COMPANIES = [
     "mixpanel", "amplitude", "instacart", "rippling", "doordash",
     "cloudflare", "pagerduty", "hightouch", "fivetran", "cockroachdb",
     "yotpo", "honeycomb", "fastly",
-    # Verified from slug audit
     "duolingo", "waymo", "assemblyai", "coursera", "scaleai",
 ]
 
@@ -192,7 +244,6 @@ def fetch_greenhouse_jobs() -> list:
                     break
 
                 title = job.get("title", "")
-                # Get description from content if available
                 content = job.get("content", "") or ""
                 description = content[:500] if content else title
 
@@ -234,7 +285,7 @@ def fetch_greenhouse_jobs() -> list:
 
 # ─────────────────────────────────────────────
 # SOURCE 2: LEVER
-# VERIFIED working slugs only — tested 2026-06-08
+# VERIFIED working slugs only — tested 2026-06-13
 # api.lever.co/v0/postings/{slug}?mode=json
 # ─────────────────────────────────────────────
 
@@ -242,10 +293,10 @@ LEVER_COMPANIES = [
     "mistral",    # 171 jobs
     "zoox",       # 214 jobs
     "spotify",    # 144 jobs
+    "palantir",   # 228 jobs
     "outreach",   # 32 jobs
+    "atlassian",  # verified via Blind
     "anyscale",   # 1 job
-    "atlassian",  # verify this one
-    "palantir",   # 228 jobs (from earlier test)
 ]
 
 
@@ -309,64 +360,64 @@ def fetch_lever_jobs() -> list:
 
 # ─────────────────────────────────────────────
 # SOURCE 3: ASHBY
-# VERIFIED working slugs only — tested 2026-06-08
+# VERIFIED working slugs only — tested 2026-06-13
 # api.ashbyhq.com/posting-api/job-board/{slug}
 # ─────────────────────────────────────────────
 
 ASHBY_COMPANIES = [
-    # Batch 1 verified
-    "openai",        # 718 jobs
-    "elevenlabs",    # 151 jobs
-    "notion",        # 145 jobs
-    "cohere",        # 128 jobs
-    "langchain",     # 105 jobs
-    "cursor",        # 93 jobs
-    "synthesia",     # 75 jobs
-    "perplexity",    # 69 jobs
-    "baseten",       # 66 jobs
-    "supabase",      # 46 jobs
-    "runway-ml",     # 39 jobs
-    "twelve-labs",   # 33 jobs
-    "modal",         # 31 jobs
-    "fireworks-ai",  # 27 jobs
-    "roboflow",      # 26 jobs
-    "render",        # 23 jobs
-    "astronomer",    # 22 jobs
-    "posthog",       # 16 jobs
-    "character",     # 16 jobs
-    "bubble",        # 14 jobs
-    "anyscale",      # 10 jobs
-    "railway",       # 9 jobs
-    "glide",         # 9 jobs
-    "neon",          # 7 jobs
-    "pinecone",      # 6 jobs
-    "lancedb",       # 6 jobs
-    "plane",         # 6 jobs
-    "weaviate",      # 5 jobs
-    "pika",          # 5 jobs
-    "prefect",       # 5 jobs
-    "runway",        # 4 jobs
-    "hightouch",     # 1 job
-    # Batch 2 verified
-    "ramp",          # 112 jobs
-    "vanta",         # 110 jobs
-    "cerebras",      # 105 jobs
-    "replit",        # 98 jobs
-    "clickup",       # 63 jobs
-    "drata",         # 53 jobs
-    "benchling",     # 50 jobs
-    "insitro",       # 12 jobs
-    "moderntreasury",# 7 jobs
-    # Batch 3 verified
-    "temporal",      # 50 jobs
-    "linear",        # 25 jobs
-    "airbyte",       # 8 jobs
+    # Batch 1 — tested 2026-06-08
+    "openai",         # 718 jobs
+    "elevenlabs",     # 151 jobs
+    "notion",         # 145 jobs
+    "cohere",         # 128 jobs
+    "langchain",      # 105 jobs
+    "cursor",         # 93 jobs
+    "synthesia",      # 75 jobs
+    "perplexity",     # 69 jobs
+    "baseten",        # 66 jobs
+    "supabase",       # 46 jobs
+    "runway-ml",      # 39 jobs
+    "twelve-labs",    # 33 jobs
+    "modal",          # 31 jobs
+    "fireworks-ai",   # 27 jobs
+    "roboflow",       # 26 jobs
+    "render",         # 23 jobs
+    "astronomer",     # 22 jobs
+    "posthog",        # 16 jobs
+    "character",      # 16 jobs
+    "bubble",         # 14 jobs
+    "anyscale",       # 10 jobs
+    "railway",        # 9 jobs
+    "glide",          # 9 jobs
+    "neon",           # 7 jobs
+    "pinecone",       # 6 jobs
+    "lancedb",        # 6 jobs
+    "plane",          # 6 jobs
+    "weaviate",       # 5 jobs
+    "pika",           # 5 jobs
+    "prefect",        # 5 jobs
+    "runway",         # 4 jobs
+    "hightouch",      # 1 job
+    # Batch 2 — tested 2026-06-13
+    "ramp",           # 112 jobs
+    "vanta",          # 110 jobs
+    "cerebras",       # 105 jobs
+    "replit",         # 98 jobs
+    "clickup",        # 63 jobs
+    "drata",          # 53 jobs
+    "benchling",      # 50 jobs
+    "insitro",        # 12 jobs
+    "moderntreasury", # 7 jobs
+    # Batch 3 — tested 2026-06-13
+    "temporal",       # 50 jobs
+    "linear",         # 25 jobs
+    "airbyte",        # 8 jobs
 ]
 
 
 def fetch_ashby_jobs() -> list:
     """Fetch ML/AI jobs from Ashby public API. No auth needed.
-    Used by OpenAI, Notion, Cursor, Perplexity, Cohere and many more AI companies.
+    Used by OpenAI, Notion, Cursor, Perplexity, Cohere, Ramp and many more.
     """
     print("  [Ashby] Scanning company boards...")
     jobs = []
@@ -430,11 +481,11 @@ def fetch_ashby_jobs() -> list:
 # SOURCE 4: JSEARCH API
 # Aggregates: Indeed, LinkedIn, Glassdoor,
 # ZipRecruiter, Dice, SimplyHired, and more
-# 28 queries + extra pages for top queries = max ~700 raw results
+# 50 queries, top 12 get 3 pages = ~1250 potential raw results
 # ─────────────────────────────────────────────
 
 def fetch_jsearch_jobs(work_location: str = "remote") -> list:
-    """Fetch from JSearch which pulls from Indeed, LinkedIn, Glassdoor and more."""
+    """Fetch from JSearch — aggregates Indeed, LinkedIn, Glassdoor, ZipRecruiter and more."""
     if not RAPIDAPI_KEY:
         print("  [JSearch] No RAPIDAPI_KEY set, skipping")
         return []
@@ -444,8 +495,6 @@ def fetch_jsearch_jobs(work_location: str = "remote") -> list:
     seen_ids = set()
 
     for query in JSEARCH_QUERIES:
-        # Determine how many pages to fetch
-        # Top queries get 3 pages, others get 2
         num_pages = 3 if query in JSEARCH_HIGH_VOLUME_QUERIES else 2
 
         try:
@@ -457,7 +506,6 @@ def fetch_jsearch_jobs(work_location: str = "remote") -> list:
                 "employment_types": "FULLTIME,INTERN,CONTRACTOR",
                 "job_requirements": "no_experience,under_3_years_experience",
             }
-            # Only filter remote strictly when location is remote
             if work_location == "remote":
                 params["remote_jobs_only"] = "true"
 
@@ -473,13 +521,16 @@ def fetch_jsearch_jobs(work_location: str = "remote") -> list:
                 for raw in data.get("data", []):
                     title = raw.get("job_title", "")
                     description = raw.get("job_description", "")
+                    company = raw.get("employer_name", "")
+
+                    # Skip junk staffing agencies
+                    if is_junk_company(company):
+                        continue
 
                     if not is_relevant(title, description):
                         continue
 
-                    company = raw.get("employer_name", "")
                     job_id = make_job_id(title, company, "jsearch")
-
                     if job_id in seen_ids:
                         continue
                     seen_ids.add(job_id)
@@ -510,7 +561,7 @@ def fetch_jsearch_jobs(work_location: str = "remote") -> list:
             else:
                 print(f"  [JSearch] Error for '{query}': {data.get('message', 'unknown')}")
 
-            time.sleep(0.5)
+            time.sleep(0.4)
 
         except Exception as e:
             print(f"  [JSearch] Error for '{query}': {e}")
@@ -603,7 +654,6 @@ def find_all_jobs(max_jobs: int = 100, work_location: str = "remote") -> list:
     filtered = filter_by_location(unique, work_location)
     print(f"After location filter: {len(filtered)} jobs")
 
-    # Sort: direct auto-apply platforms first
     filtered.sort(key=lambda x: (
         0 if x.get("apply_platform") in ["greenhouse", "lever", "ashby"] else 1,
         x.get("source", "")
