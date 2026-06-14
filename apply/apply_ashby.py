@@ -1,194 +1,212 @@
 """
-apply/apply_ashby.py — Ashby auto-apply via Playwright browser automation
-
-Ashby form URLs:
-  https://jobs.ashbyhq.com/<company>/<job-id>/application
+apply_ashby.py — Ashby auto-apply via Playwright browser automation
+Uses a real headless browser to fill and submit Ashby job applications.
+Ashby form URLs follow: https://jobs.ashbyhq.com/<company>/<job-id>/application
 """
-import asyncio
-import logging
 import os
 import re
-import tempfile
+import asyncio
 from pathlib import Path
 from dotenv import load_dotenv
 
 load_dotenv()
 
-logger = logging.getLogger(__name__)
-
 MAX_PER_DAY = int(os.getenv("MAX_AUTO_APPLY_PER_DAY", "20"))
-DEFAULT_TIMEOUT = 15_000
 
 CANDIDATE = {
     "first_name": "Abdou Rakib",
     "last_name": "Abente",
+    "name": "Abdou Rakib Abente",
     "email": os.getenv("CANDIDATE_EMAIL", "Rakibabente8@gmail.com"),
     "phone": os.getenv("CANDIDATE_PHONE", "+12673445217"),
     "linkedin": "https://linkedin.com/in/rakib-abente",
-    "portfolio": "https://abdourakib.com",
     "github": "https://github.com/Abdrakib",
+    "portfolio": "https://abdourakib.com",
+    "location": "Philadelphia, PA",
+    "university": "Community College of Philadelphia",
+    "degree": "Associate's Degree",
+    "major": "Computer Science",
+    "graduation": "May 2026",
+    "salary": "70000",
 }
 
 
-async def _fill_and_submit(apply_url: str, cover_letter: str, resume_path: str) -> dict:
-    from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeout
+def _answer(label: str, cover_letter: str = "") -> str:
+    l = label.lower()
+    if "first name" in l: return CANDIDATE["first_name"]
+    if "last name" in l: return CANDIDATE["last_name"]
+    if "full name" in l or (("name" in l) and "last" not in l and "first" not in l): return CANDIDATE["name"]
+    if "email" in l: return CANDIDATE["email"]
+    if "phone" in l: return CANDIDATE["phone"]
+    if "linkedin" in l: return CANDIDATE["linkedin"]
+    if "github" in l: return CANDIDATE["github"]
+    if "portfolio" in l or "website" in l or "personal site" in l: return CANDIDATE["portfolio"]
+    if "cover letter" in l or "additional info" in l or "anything else" in l: return cover_letter[:3000]
+    if "salary" in l or "compensation" in l: return CANDIDATE["salary"]
+    if "authorized" in l or "visa" in l: return "Yes"
+    if "sponsorship" in l or "sponsor" in l: return "No"
+    if "degree" in l or "education" in l: return CANDIDATE["degree"]
+    if "school" in l or "university" in l or "college" in l: return CANDIDATE["university"]
+    if "major" in l or "field of study" in l: return CANDIDATE["major"]
+    if "graduation" in l: return CANDIDATE["graduation"]
+    if "years" in l and "experience" in l: return "1"
+    if "city" in l: return "Philadelphia"
+    if "state" in l: return "Pennsylvania"
+    if "country" in l: return "United States"
+    if "zip" in l or "postal" in l: return "19111"
+    if "start" in l or "available" in l: return "Immediately"
+    if "hear" in l or "source" in l or "referred" in l: return "LinkedIn"
+    if "race" in l or "ethnicity" in l: return "Decline to self-identify"
+    if "gender" in l: return "Decline to self-identify"
+    if "veteran" in l or "military" in l: return "I am not a protected veteran"
+    if "disability" in l: return "I don't wish to answer"
+    if "remote" in l or "hybrid" in l: return "Yes"
+    return ""
 
-    if not apply_url.endswith("/application"):
+
+async def _fill_and_submit(apply_url: str, cover_letter: str, resume_path: str) -> dict:
+    from playwright.async_api import async_playwright, TimeoutError as PWTimeout
+
+    # Normalize URL — ensure it ends with /application
+    if "/application" not in apply_url:
         apply_url = apply_url.rstrip("/") + "/application"
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        context = await browser.new_context(
-            user_agent=(
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/124.0.0.0 Safari/537.36"
-            )
-        )
-        page = await context.new_page()
-        page.set_default_timeout(DEFAULT_TIMEOUT)
+        browser = await p.chromium.launch(headless=True, args=["--no-sandbox", "--disable-dev-shm-usage"])
+        page = await browser.new_page()
 
         try:
-            await page.goto(apply_url, wait_until="networkidle")
+            await page.goto(apply_url, timeout=30000, wait_until="networkidle")
 
-            await _fill_text(page, 'input[name="name.firstName"], input[placeholder*="First"]', CANDIDATE["first_name"])
-            await _fill_text(page, 'input[name="name.lastName"], input[placeholder*="Last"]', CANDIDATE["last_name"])
-            await _fill_text(page, 'input[name="email"], input[type="email"]', CANDIDATE["email"])
-            await _fill_text(page, 'input[name="phone"], input[type="tel"]', CANDIDATE["phone"])
+            # Fill all visible text inputs and textareas
+            inputs = await page.query_selector_all("input[type='text'], input[type='email'], input[type='tel'], textarea")
+            for inp in inputs:
+                label_text = ""
+                try:
+                    inp_id = await inp.get_attribute("id")
+                    if inp_id:
+                        label_el = await page.query_selector(f"label[for='{inp_id}']")
+                        if label_el:
+                            label_text = (await label_el.inner_text()).strip()
+                except Exception:
+                    pass
 
-            resume_file = Path(resume_path) if resume_path else None
-            if resume_file and resume_file.exists():
-                resume_input = await _find_file_input(page, ["resume", "cv"])
-                if resume_input:
-                    await resume_input.set_input_files(str(resume_file))
-                    logger.info("[Ashby] Resume uploaded")
-                else:
-                    logger.warning("[Ashby] No resume file input found — skipping")
-            else:
-                logger.warning(f"[Ashby] Resume not found at {resume_path}")
-
-            await _fill_if_present(page, 'input[name*="linkedin" i], input[placeholder*="LinkedIn" i]', CANDIDATE["linkedin"])
-            await _fill_if_present(page, 'input[name*="website" i], input[placeholder*="website" i], input[placeholder*="portfolio" i]', CANDIDATE["portfolio"])
-            await _fill_if_present(page, 'input[name*="github" i], input[placeholder*="github" i]', CANDIDATE["github"])
-
-            cl_textarea = page.locator('textarea[name*="cover" i], textarea[placeholder*="cover" i], textarea[aria-label*="cover" i]').first
-            if await cl_textarea.count() > 0:
-                await cl_textarea.fill(cover_letter)
-                logger.info("[Ashby] Cover letter filled in textarea")
-            else:
-                cl_file_input = await _find_file_input(page, ["cover"])
-                if cl_file_input:
-                    with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False, encoding="utf-8") as tmp:
-                        tmp.write(cover_letter)
-                        tmp_path = tmp.name
+                if not label_text:
                     try:
-                        await cl_file_input.set_input_files(tmp_path)
-                        logger.info("[Ashby] Cover letter uploaded as file")
-                    finally:
-                        Path(tmp_path).unlink(missing_ok=True)
-                else:
-                    logger.info("[Ashby] No cover letter field found")
+                        label_text = await inp.get_attribute("placeholder") or ""
+                        aria = await inp.get_attribute("aria-label") or ""
+                        name_attr = await inp.get_attribute("name") or ""
+                        label_text = label_text or aria or name_attr
+                    except Exception:
+                        pass
 
-            await _handle_dynamic_questions(page)
+                answer = _answer(label_text, cover_letter)
+                if answer:
+                    try:
+                        await inp.fill(answer)
+                    except Exception:
+                        pass
 
-            submit_btn = page.locator('button[type="submit"], button:has-text("Submit"), button:has-text("Apply")').last
-            if await submit_btn.count() == 0:
+            # Upload resume
+            if resume_path and Path(resume_path).exists():
+                file_inputs = await page.query_selector_all("input[type='file']")
+                for fi in file_inputs:
+                    try:
+                        fi_name = (await fi.get_attribute("name") or "").lower()
+                        fi_id = (await fi.get_attribute("id") or "").lower()
+                        # Target resume input specifically, skip cover letter file inputs
+                        if "cover" not in fi_name and "cover" not in fi_id:
+                            await fi.set_input_files(resume_path)
+                            break
+                    except Exception:
+                        pass
+
+            # Handle dropdowns
+            selects = await page.query_selector_all("select")
+            for sel in selects:
+                try:
+                    sel_id = await sel.get_attribute("id") or ""
+                    label_el = await page.query_selector(f"label[for='{sel_id}']")
+                    label_text = (await label_el.inner_text()).strip() if label_el else sel_id
+
+                    options = await sel.query_selector_all("option")
+                    answer = _answer(label_text, cover_letter).lower()
+
+                    for opt in options:
+                        opt_text = (await opt.inner_text()).lower()
+                        opt_val = (await opt.get_attribute("value") or "").lower()
+                        if answer and (answer in opt_text or answer in opt_val):
+                            await sel.select_option(value=await opt.get_attribute("value"))
+                            break
+                except Exception:
+                    pass
+
+            # Handle radio buttons (work auth, sponsorship, etc.)
+            radio_groups = {}
+            radios = await page.query_selector_all("input[type='radio']")
+            for radio in radios:
+                try:
+                    name = await radio.get_attribute("name") or ""
+                    if name not in radio_groups:
+                        radio_groups[name] = []
+                    radio_groups[name].append(radio)
+                except Exception:
+                    pass
+
+            for group_name, radio_list in radio_groups.items():
+                try:
+                    # Find label for group
+                    label_text = group_name.lower()
+                    answer = _answer(label_text, cover_letter).lower()
+                    for radio in radio_list:
+                        val = (await radio.get_attribute("value") or "").lower()
+                        if answer and answer in val:
+                            await radio.click()
+                            break
+                except Exception:
+                    pass
+
+            # Submit
+            submitted = False
+            for submit_text in ["Submit Application", "Submit", "Apply", "Send Application"]:
+                try:
+                    btn = page.get_by_role("button", name=submit_text).first
+                    if await btn.is_visible(timeout=2000):
+                        await btn.click()
+                        await page.wait_for_load_state("networkidle", timeout=15000)
+                        submitted = True
+                        break
+                except Exception:
+                    pass
+
+            if not submitted:
+                try:
+                    btn = await page.query_selector("button[type='submit']")
+                    if btn:
+                        await btn.click()
+                        await page.wait_for_load_state("networkidle", timeout=15000)
+                        submitted = True
+                except Exception:
+                    pass
+
+            page_text = (await page.inner_text("body")).lower()
+            success_signals = ["application submitted", "thank you", "we received", "successfully applied", "application received"]
+            closed_signals = ["no longer open", "position has been filled", "not accepting", "job has been closed", "no longer available"]
+            success = any(s in page_text for s in success_signals)
+
+            if not success and any(s in page_text for s in closed_signals):
                 await browser.close()
-                return {"submitted": False, "success": False, "error": "submit_button_not_found"}
+                return {"submitted": False, "success": False, "error": "job_closed"}
 
-            await submit_btn.scroll_into_view_if_needed()
-            await submit_btn.click()
-
-            try:
-                await page.wait_for_selector(
-                    "text=Thank you, text=Application submitted, text=received your application",
-                    timeout=10_000
-                )
-                await browser.close()
-                return {"submitted": True, "success": True}
-            except PlaywrightTimeout:
-                page_url = page.url.lower()
-                if "confirmation" in page_url or "success" in page_url or "thank" in page_url:
-                    await browser.close()
-                    return {"submitted": True, "success": True}
-                error_els = await page.locator(".error, [role='alert'], .field-error").all_text_contents()
-                error_text = " | ".join(error_els) if error_els else "unknown error after submit"
-                await browser.close()
-                return {"submitted": True, "success": False, "error": error_text[:200]}
-
-        except PlaywrightTimeout as e:
             await browser.close()
-            return {"submitted": False, "success": False, "error": f"timeout: {e}"}
+            return {"submitted": submitted, "success": success, "page_text": page_text[:300]}
+
+        except PWTimeout:
+            await browser.close()
+            return {"submitted": False, "success": False, "error": "timeout"}
         except Exception as e:
             await browser.close()
             return {"submitted": False, "success": False, "error": str(e)[:200]}
-
-
-async def _fill_text(page, selector: str, value: str):
-    try:
-        loc = page.locator(selector).first
-        if await loc.count() > 0:
-            await loc.fill(value)
-    except Exception:
-        pass
-
-
-async def _fill_if_present(page, selector: str, value: str):
-    await _fill_text(page, selector, value)
-
-
-async def _find_file_input(page, keywords: list[str]):
-    inputs = await page.locator('input[type="file"]').all()
-    for inp in inputs:
-        name = (await inp.get_attribute("name") or "").lower()
-        id_ = (await inp.get_attribute("id") or "").lower()
-        label = (await inp.get_attribute("aria-label") or "").lower()
-        combined = f"{name} {id_} {label}"
-        if any(kw in combined for kw in keywords):
-            return inp
-    if len(inputs) == 1:
-        return inputs[0]
-    return None
-
-
-async def _handle_dynamic_questions(page):
-    auth_selectors = [
-        'select[name*="authorized" i]',
-        'select[name*="work_auth" i]',
-        'select[aria-label*="authorized" i]',
-    ]
-    for sel in auth_selectors:
-        try:
-            el = page.locator(sel).first
-            if await el.count() > 0:
-                await el.select_option(label=re.compile(r"yes", re.I))
-        except Exception:
-            pass
-
-    sponsor_selectors = [
-        'select[name*="sponsor" i]',
-        'select[aria-label*="sponsor" i]',
-    ]
-    for sel in sponsor_selectors:
-        try:
-            el = page.locator(sel).first
-            if await el.count() > 0:
-                await el.select_option(label=re.compile(r"no", re.I))
-        except Exception:
-            pass
-
-    try:
-        hear_el = page.locator('select[name*="hear" i], select[aria-label*="hear" i]').first
-        if await hear_el.count() > 0:
-            options = await hear_el.locator("option").all()
-            labels = [await o.text_content() for o in options]
-            linkedin_opt = next((l for l in labels if "linkedin" in (l or "").lower()), None)
-            if linkedin_opt:
-                await hear_el.select_option(label=linkedin_opt)
-            elif len(labels) > 1:
-                await hear_el.select_option(index=1)
-    except Exception:
-        pass
 
 
 def apply_ashby(
@@ -240,5 +258,6 @@ def apply_ashby(
         }
     else:
         error = result.get("error", "unknown")
-        print(f"  [Ashby] ❌ Failed: {title} at {company} — {error}")
+        if error != "job_closed":
+            print(f"  [Ashby] ❌ Failed: {title} at {company} — {error}")
         return {"success": False, "reason": error, "company": company, "title": title}
