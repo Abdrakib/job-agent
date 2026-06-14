@@ -56,7 +56,7 @@ AUTO-APPLIED ({len(auto_applied)} jobs) — DONE, nothing needed
                 platform = j.get("apply_platform", "").upper()
                 body += f"  ✅ {j.get('job_title','?')} at {j.get('company','?')} [{platform}] {j.get('match_score','?')}%\n"
         else:
-            body += "  No auto-applied jobs today (check Greenhouse/Lever company lists)\n"
+            body += "  No auto-applied jobs today (check Greenhouse/Lever/Ashby company lists)\n"
 
         body += f"""
 MANUAL APPLY ({len(manual)} jobs) — Materials ready in dashboard
@@ -157,6 +157,7 @@ def run_job_discovery():
             )
             from apply.greenhouse import apply_greenhouse
             from apply.lever import apply_lever
+            from apply.apply_ashby import apply_ashby
 
             init_database()
 
@@ -177,7 +178,8 @@ def run_job_discovery():
             all_jobs = find_all_jobs(max_jobs=max_jobs, work_location=work_location)
             gh_count = len([j for j in all_jobs if j.get("apply_platform") == "greenhouse"])
             lv_count = len([j for j in all_jobs if j.get("apply_platform") == "lever"])
-            print(f"  ✅ {len(all_jobs)} jobs found | Greenhouse: {gh_count} | Lever: {lv_count}")
+            ab_count = len([j for j in all_jobs if j.get("apply_platform") == "ashby"])
+            print(f"  ✅ {len(all_jobs)} jobs found | Greenhouse: {gh_count} | Lever: {lv_count} | Ashby: {ab_count}")
 
             # Filter: remove jobs already seen this session or in DB from previous runs
             jobs = [j for j in all_jobs if j.get("id", "") not in seen_job_ids]
@@ -249,11 +251,12 @@ def run_job_discovery():
             print(f"  ✅ {generated} cover letters + resumes generated")
 
             # STEP 5: auto-apply pipeline
-            # Sort: greenhouse first (most reliable), then lever, then direct
+            # Sort: greenhouse first, then lever, then ashby, then direct
             print(f"\n[5/5] Auto-apply pipeline (limit: {MAX_AUTO_APPLY_PER_DAY}/day)...")
             sorted_jobs = sorted(scored_jobs, key=lambda x: (
                 0 if x.get("apply_platform") == "greenhouse" else
-                1 if x.get("apply_platform") == "lever" else 2
+                1 if x.get("apply_platform") == "lever" else
+                2 if x.get("apply_platform") == "ashby" else 3
             ))
 
             for job in sorted_jobs:
@@ -303,8 +306,12 @@ def run_job_discovery():
                                          platform="greenhouse", apply_url=apply_url)
                         print(f"  ✅ Applied: {title} at {company}")
                     else:
-                        print(f"  ❌ Failed: {title} at {company} — {result.get('error', '') or result.get('reason', '')}")
-                        manual.append(job)
+                        error = result.get('error', '') or result.get('reason', '')
+                        if error == 'job_closed':
+                            print(f"  ⏭️  Expired: {title} at {company} — job no longer open")
+                        else:
+                            print(f"  ❌ Failed: {title} at {company} — {error}")
+                            manual.append(job)
 
                 elif platform == "lever":
                     result = apply_lever(
@@ -323,7 +330,25 @@ def run_job_discovery():
                         print(f"  ❌ Failed: {title} at {company} — {result.get('error', '') or result.get('reason', '')}")
                         manual.append(job)
 
+                elif platform == "ashby":
+                    result = apply_ashby(
+                        job=normalized_job, scored_job=normalized_job,
+                        candidate_profile=profile,
+                        cover_letter_text=cover_letter,
+                        resume_path=resume_path,
+                        applied_today_count=applied_today
+                    )
+                    if result.get("success"):
+                        auto_applied.append(job)
+                        save_application(job_id=job_id, company=company, title=title,
+                                         platform="ashby", apply_url=apply_url)
+                        print(f"  ✅ Applied: {title} at {company}")
+                    else:
+                        print(f"  ❌ Failed: {title} at {company} — {result.get('error', '') or result.get('reason', '')}")
+                        manual.append(job)
+
                 else:
+                    print(f"  ⏭️  No auto-apply handler for platform '{platform}': {title} at {company}")
                     manual.append(job)
 
             all_auto_applied.extend(auto_applied)
