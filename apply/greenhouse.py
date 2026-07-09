@@ -179,7 +179,11 @@ async def _fill_and_submit(apply_url: str, cover_letter: str, resume_path: str) 
             # Check for success indicators
             page_text = (await page.inner_text("body")).lower()
             success_signals = ["application submitted", "thank you", "we received", "successfully applied", "application received"]
+            closed_signals = ["no longer open", "position has been filled", "not accepting", "job has been closed", "no longer available"]
             success = any(s in page_text for s in success_signals)
+            if not success and any(s in page_text for s in closed_signals):
+                await browser.close()
+                return {"submitted": False, "success": False, "error": "job_closed"}
 
             await browser.close()
             return {"submitted": submitted, "success": success, "page_text": page_text[:300]}
@@ -244,5 +248,6 @@ def apply_greenhouse(
         }
     else:
         error = result.get("error", "unknown")
-        print(f"  [Greenhouse] ❌ Failed: {title} at {company} — {error}")
+        if error != "job_closed":
+            print(f"  [Greenhouse] ❌ Failed: {title} at {company} — {error}")
         return {"success": False, "reason": error, "company": company, "title": title}

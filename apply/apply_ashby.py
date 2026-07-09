@@ -4,7 +4,7 @@ Uses a real headless browser to fill and submit Ashby job applications.
 Ashby form URLs follow: https://jobs.ashbyhq.com/<company>/<job-id>/application
 """
 import os
-import re
+import time
 import asyncio
 from pathlib import Path
 from dotenv import load_dotenv
@@ -12,6 +12,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 MAX_PER_DAY = int(os.getenv("MAX_AUTO_APPLY_PER_DAY", "20"))
+BROWSER_TIMEOUT = 45000   # 45 seconds max per page action
+APPLY_TIMEOUT   = 90      # 90 seconds hard limit per application
 
 CANDIDATE = {
     "first_name": "Abdou Rakib",
@@ -67,18 +69,29 @@ def _answer(label: str, cover_letter: str = "") -> str:
 async def _fill_and_submit(apply_url: str, cover_letter: str, resume_path: str) -> dict:
     from playwright.async_api import async_playwright, TimeoutError as PWTimeout
 
-    # Normalize URL — ensure it ends with /application
+    # Normalize URL
     if "/application" not in apply_url:
         apply_url = apply_url.rstrip("/") + "/application"
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True, args=["--no-sandbox", "--disable-dev-shm-usage"])
+        browser = await p.chromium.launch(
+            headless=True,
+            args=[
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-gpu",
+                "--disable-software-rasterizer",
+                "--use-gl=swiftshader",
+                "--disable-setuid-sandbox",
+            ]
+        )
         page = await browser.new_page()
+        page.set_default_timeout(BROWSER_TIMEOUT)
 
         try:
-            await page.goto(apply_url, timeout=30000, wait_until="networkidle")
+            await page.goto(apply_url, timeout=30000, wait_until="domcontentloaded")
 
-            # Fill all visible text inputs and textareas
+            # Fill text inputs
             inputs = await page.query_selector_all("input[type='text'], input[type='email'], input[type='tel'], textarea")
             for inp in inputs:
                 label_text = ""
@@ -114,7 +127,6 @@ async def _fill_and_submit(apply_url: str, cover_letter: str, resume_path: str) 
                     try:
                         fi_name = (await fi.get_attribute("name") or "").lower()
                         fi_id = (await fi.get_attribute("id") or "").lower()
-                        # Target resume input specifically, skip cover letter file inputs
                         if "cover" not in fi_name and "cover" not in fi_id:
                             await fi.set_input_files(resume_path)
                             break
@@ -128,40 +140,13 @@ async def _fill_and_submit(apply_url: str, cover_letter: str, resume_path: str) 
                     sel_id = await sel.get_attribute("id") or ""
                     label_el = await page.query_selector(f"label[for='{sel_id}']")
                     label_text = (await label_el.inner_text()).strip() if label_el else sel_id
-
                     options = await sel.query_selector_all("option")
                     answer = _answer(label_text, cover_letter).lower()
-
                     for opt in options:
                         opt_text = (await opt.inner_text()).lower()
                         opt_val = (await opt.get_attribute("value") or "").lower()
                         if answer and (answer in opt_text or answer in opt_val):
                             await sel.select_option(value=await opt.get_attribute("value"))
-                            break
-                except Exception:
-                    pass
-
-            # Handle radio buttons (work auth, sponsorship, etc.)
-            radio_groups = {}
-            radios = await page.query_selector_all("input[type='radio']")
-            for radio in radios:
-                try:
-                    name = await radio.get_attribute("name") or ""
-                    if name not in radio_groups:
-                        radio_groups[name] = []
-                    radio_groups[name].append(radio)
-                except Exception:
-                    pass
-
-            for group_name, radio_list in radio_groups.items():
-                try:
-                    # Find label for group
-                    label_text = group_name.lower()
-                    answer = _answer(label_text, cover_letter).lower()
-                    for radio in radio_list:
-                        val = (await radio.get_attribute("value") or "").lower()
-                        if answer and answer in val:
-                            await radio.click()
                             break
                 except Exception:
                     pass
@@ -199,13 +184,16 @@ async def _fill_and_submit(apply_url: str, cover_letter: str, resume_path: str) 
                 return {"submitted": False, "success": False, "error": "job_closed"}
 
             await browser.close()
-            return {"submitted": submitted, "success": success, "page_text": page_text[:300]}
+            return {"submitted": submitted, "success": success}
 
         except PWTimeout:
             await browser.close()
             return {"submitted": False, "success": False, "error": "timeout"}
         except Exception as e:
-            await browser.close()
+            try:
+                await browser.close()
+            except Exception:
+                pass
             return {"submitted": False, "success": False, "error": str(e)[:200]}
 
 
@@ -219,7 +207,7 @@ def apply_ashby(
 ) -> dict:
     apply_url = job.get("apply_url", "")
     company = job.get("company", scored_job.get("company", ""))
-    title = job.get("title", scored_job.get("job_title", ""))
+    title = job.get("title") or job.get("job_title") or scored_job.get("job_title", "")
 
     if applied_today_count >= MAX_PER_DAY:
         return {"success": False, "reason": "daily_limit_reached", "company": company, "title": title}
@@ -234,28 +222,24 @@ def apply_ashby(
     print(f"  [Ashby] 🌐 Applying via browser: {title} at {company}")
 
     try:
-        result = asyncio.run(_fill_and_submit(apply_url, cover_letter_text, resume_path))
+        result = asyncio.run(
+            asyncio.wait_for(_fill_and_submit(apply_url, cover_letter_text, resume_path), timeout=APPLY_TIMEOUT)
+        )
+    except asyncio.TimeoutError:
+        print(f"  [Ashby] ⏱️  Hard timeout ({APPLY_TIMEOUT}s): {title} at {company} — skipping")
+        return {"success": False, "reason": "hard_timeout", "company": company, "title": title}
     except Exception as e:
         return {"success": False, "reason": str(e)[:100], "company": company, "title": title}
 
+    # Pause between applications to avoid overloading server
+    time.sleep(5)
+
     if result.get("success"):
         print(f"  [Ashby] ✅ Applied: {title} at {company}")
-        return {
-            "success": True,
-            "company": company,
-            "title": title,
-            "platform": "ashby",
-            "apply_url": apply_url,
-        }
+        return {"success": True, "company": company, "title": title, "platform": "ashby", "apply_url": apply_url}
     elif result.get("submitted"):
         print(f"  [Ashby] ✅ Submitted (unconfirmed): {title} at {company}")
-        return {
-            "success": True,
-            "company": company,
-            "title": title,
-            "platform": "ashby",
-            "apply_url": apply_url,
-        }
+        return {"success": True, "company": company, "title": title, "platform": "ashby", "apply_url": apply_url}
     else:
         error = result.get("error", "unknown")
         if error != "job_closed":

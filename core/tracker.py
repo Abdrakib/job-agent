@@ -1,7 +1,7 @@
 import json
 import os
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -25,6 +25,15 @@ def get_connection():
     conn = sqlite3.connect(str(DB_PATH))
     conn.row_factory = sqlite3.Row
     return conn
+
+
+_ET_OFFSET = timedelta(hours=-4)  # US Eastern (fixed UTC-4; no DST)
+
+
+def _now_et_isoformat() -> str:
+    """ISO timestamp in ET so date_applied matches get_applied_today_count() LIKE filter."""
+    et_now = datetime.now(timezone.utc) + _ET_OFFSET
+    return et_now.isoformat(timespec="seconds")
 
 
 def _close(conn, cursor=None):
@@ -300,7 +309,7 @@ def save_application(job_id: str, company: str, title: str,
                      resume_path: str = None) -> int:
     conn = get_connection()
     cursor = conn.cursor()
-    now = datetime.now().isoformat()
+    now = _now_et_isoformat()
     follow_up_days = int(get_setting("follow_up_days") or 7)
     follow_up_date = (datetime.now() + timedelta(days=follow_up_days)).isoformat()
 
@@ -552,6 +561,69 @@ def get_applied_today_count() -> int:
         return 0
 
 
+def _ensure_permanently_skipped_table(cursor):
+    if _use_postgres():
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS permanently_skipped (
+                job_id TEXT PRIMARY KEY,
+                reason TEXT,
+                skipped_at TIMESTAMP DEFAULT NOW()
+            )
+        """)
+    else:
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS permanently_skipped (
+                job_id TEXT PRIMARY KEY,
+                reason TEXT,
+                skipped_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+
+def get_permanently_skipped_ids() -> set:
+    """
+    Load job IDs that should never be re-scored:
+    below threshold, already applied, or closed/expired.
+    """
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        _ensure_permanently_skipped_table(cursor)
+        conn.commit()
+        cursor.execute("SELECT job_id FROM permanently_skipped")
+        rows = cursor.fetchall()
+        _close(conn, cursor)
+        return {row["job_id"] for row in rows}
+    except Exception as e:
+        print(f"  [tracker] get_permanently_skipped_ids error: {e}")
+        return set()
+
+
+def mark_permanently_skipped(job_id: str, reason: str = "scored_or_applied"):
+    """Mark a job as permanently skipped so it is never re-scored."""
+    if not job_id:
+        return
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        _ensure_permanently_skipped_table(cursor)
+        if _use_postgres():
+            cursor.execute("""
+                INSERT INTO permanently_skipped (job_id, reason)
+                VALUES (%s, %s)
+                ON CONFLICT (job_id) DO NOTHING
+            """, (job_id, reason))
+        else:
+            cursor.execute("""
+                INSERT OR IGNORE INTO permanently_skipped (job_id, reason)
+                VALUES (?, ?)
+            """, (job_id, reason))
+        conn.commit()
+        _close(conn, cursor)
+    except Exception as e:
+        print(f"  [tracker] mark_permanently_skipped error: {e}")
+
+
 def save_cover_letter(job_id: str, cover_letter_text: str, resume_path: str = None):
     """Save cover letter text and resume path to jobs table."""
     if not job_id:
@@ -585,6 +657,8 @@ class JobTracker:
     def get_documents(self, *a, **kw): return get_documents(*a, **kw)
     def get_setting(self, *a, **kw): return get_setting(*a, **kw)
     def save_setting(self, *a, **kw): return save_setting(*a, **kw)
+    def get_permanently_skipped_ids(self): return get_permanently_skipped_ids()
+    def mark_permanently_skipped(self, *a, **kw): return mark_permanently_skipped(*a, **kw)
 
 
 if __name__ == "__main__":

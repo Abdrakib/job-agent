@@ -110,8 +110,9 @@ def run_job_discovery():
     Daily limit: MAX_AUTO_APPLY_PER_DAY applications.
 
     Key design decisions:
-    - seen_job_ids: tracks every job id scored this session (across all attempts).
-      Skipped jobs are never re-scored in retries — retries only process NEW jobs.
+    - permanently_skipped: low-score, applied, and closed jobs stored in DB.
+      They are never re-scored in future runs, saving API credits.
+    - failed_apply_ids: qualified jobs that failed apply remain eligible for retry.
     - save_job receives a merged dict so id + match_score are always both present.
     - scored dict is used directly for cover letters (has job_id, job_title, job_description).
     - already_applied() gates both cover letter generation and auto-apply.
@@ -122,9 +123,10 @@ def run_job_discovery():
     all_auto_applied = []
     all_manual = []
 
-    # Tracks job ids scored across ALL attempts this session.
-    # Prevents retries from re-scoring jobs already seen (whether SKIP or APPLY).
-    seen_job_ids = set()
+    from core.tracker import get_permanently_skipped_ids, mark_permanently_skipped
+    permanently_skipped = get_permanently_skipped_ids()
+    failed_apply_ids = set()
+    failed_apply_jobs = {}
 
     for attempt in range(1, MAX_ATTEMPTS + 1):
         applied_today = get_applied_today_count()
@@ -173,7 +175,7 @@ def run_job_discovery():
             profile = get_candidate_profile()
             print(f"  ✅ {profile.get('name')}")
 
-            # STEP 2: discover jobs — then filter out already-seen ones
+            # STEP 2: discover jobs — then filter out permanently skipped ones
             print("\n[2/5] Discovering jobs...")
             all_jobs = find_all_jobs(max_jobs=max_jobs, work_location=work_location)
             gh_count = len([j for j in all_jobs if j.get("apply_platform") == "greenhouse"])
@@ -181,53 +183,51 @@ def run_job_discovery():
             ab_count = len([j for j in all_jobs if j.get("apply_platform") == "ashby"])
             print(f"  ✅ {len(all_jobs)} jobs found | Greenhouse: {gh_count} | Lever: {lv_count} | Ashby: {ab_count}")
 
-            # Filter: remove jobs already seen this session or in DB from previous runs
-            jobs = [j for j in all_jobs if j.get("id", "") not in seen_job_ids]
+            jobs = [j for j in all_jobs if j.get("id", "") not in permanently_skipped]
             print(f"  ✅ {len(jobs)} new jobs after filtering already-seen ({len(all_jobs) - len(jobs)} skipped)")
 
             if not jobs:
                 print("  No new jobs to score — stopping retries")
                 break
 
-            # STEP 3: score with Claude
+            # STEP 3: score with Claude (skip re-scoring failed-apply retries)
             print("\n[3/5] Scoring jobs with Claude...")
-            scored_jobs = score_all_jobs(jobs, profile, min_score=min_score)
+            retry_ids = failed_apply_ids - permanently_skipped
+            fresh_jobs = [j for j in jobs if j.get("id", "") not in retry_ids]
+            scored_fresh = score_all_jobs(fresh_jobs, profile, min_score=min_score) if fresh_jobs else []
+            scored_retry = [
+                failed_apply_jobs[jid] for jid in retry_ids
+                if jid in failed_apply_jobs
+            ]
+            scored_jobs = scored_fresh + scored_retry
+            if scored_retry:
+                print(f"  ↩️  {len(scored_retry)} failed-apply jobs queued for retry (no re-score)")
 
-            # Mark ALL discovered jobs as seen (not just qualified ones)
-            # so retries never re-score skipped jobs
-            for j in jobs:
+            scored_ids = {s.get("job_id", "") for s in scored_jobs}
+            for j in fresh_jobs:
                 jid = j.get("id", "")
-                if jid:
-                    seen_job_ids.add(jid)
+                if jid and jid not in scored_ids:
+                    permanently_skipped.add(jid)
+                    mark_permanently_skipped(jid, reason="below_threshold")
 
             print(f"  ✅ {len(scored_jobs)} qualified out of {len(jobs)} scored")
 
             if not scored_jobs:
                 print("  No qualified jobs this attempt — will retry with fresh discovery")
-                continue  # don't break — retry with new jobs
+                continue
 
             # STEP 4: save to DB + generate cover letters
-            # FIX: merge original_job + scored so save_job always has both
-            # 'id' (from original) and 'match_score' (from scored).
-            # scored dict is used directly for cover letters since it already
-            # has job_id, job_title, job_description in the right keys.
             print("\n[4/5] Saving + generating cover letters...")
             jobs_by_id = {job.get("id", ""): job for job in jobs}
             cover_letters = {}
 
             for scored in scored_jobs:
-                # Get original job to have the 'id' field save_job needs
                 original_job = jobs_by_id.get(scored.get("job_id", ""), {})
-                # Merge: original fields first, then scored fields on top.
-                # This guarantees 'id' comes from original and 'match_score'
-                # comes from scored. If lookup fails, job_id is used as id.
                 merged = {**original_job, **scored}
                 if not merged.get("id"):
                     merged["id"] = scored.get("job_id", "")
                 save_job(merged, scored)
 
-            # Generate cover letters using scored dict directly —
-            # it already has job_id, job_title, job_description
             top20 = sorted(scored_jobs, key=lambda x: x.get("match_score", 0), reverse=True)[:20]
             generated = 0
             for job in top20:
@@ -238,8 +238,6 @@ def run_job_discovery():
                 if already_applied(company, title):
                     continue
 
-                # scored dict already has job_title and job_description set
-                # by the scorer — no need to re-normalize
                 try:
                     cl_text = generate_and_save_cover_letter(job, profile)
                     cover_letters[job_id] = cl_text
@@ -251,7 +249,6 @@ def run_job_discovery():
             print(f"  ✅ {generated} cover letters + resumes generated")
 
             # STEP 5: auto-apply pipeline
-            # Sort: greenhouse first, then lever, then ashby, then direct
             print(f"\n[5/5] Auto-apply pipeline (limit: {MAX_AUTO_APPLY_PER_DAY}/day)...")
             sorted_jobs = sorted(scored_jobs, key=lambda x: (
                 0 if x.get("apply_platform") == "greenhouse" else
@@ -286,9 +283,8 @@ def run_job_discovery():
                 if job.get("resume_path") and Path(job["resume_path"]).exists():
                     resume_path = job["resume_path"]
 
-                # normalized_job uses scored keys (job_title, job_id) which
-                # apply_greenhouse and apply_lever both expect
                 normalized_job = {**job}
+                normalized_job["title"] = title
                 normalized_job["job_title"] = title
                 normalized_job["job_id"] = job_id
 
@@ -304,12 +300,22 @@ def run_job_discovery():
                         auto_applied.append(job)
                         save_application(job_id=job_id, company=company, title=title,
                                          platform="greenhouse", apply_url=apply_url)
+                        permanently_skipped.add(job_id)
+                        mark_permanently_skipped(job_id, reason="applied")
+                        failed_apply_ids.discard(job_id)
+                        failed_apply_jobs.pop(job_id, None)
                         print(f"  ✅ Applied: {title} at {company}")
                     else:
                         error = result.get('error', '') or result.get('reason', '')
                         if error == 'job_closed':
+                            permanently_skipped.add(job_id)
+                            mark_permanently_skipped(job_id, reason="job_closed")
+                            failed_apply_ids.discard(job_id)
+                            failed_apply_jobs.pop(job_id, None)
                             print(f"  ⏭️  Expired: {title} at {company} — job no longer open")
                         else:
+                            failed_apply_ids.add(job_id)
+                            failed_apply_jobs[job_id] = job
                             print(f"  ❌ Failed: {title} at {company} — {error}")
                             manual.append(job)
 
@@ -325,10 +331,24 @@ def run_job_discovery():
                         auto_applied.append(job)
                         save_application(job_id=job_id, company=company, title=title,
                                          platform="lever", apply_url=apply_url)
+                        permanently_skipped.add(job_id)
+                        mark_permanently_skipped(job_id, reason="applied")
+                        failed_apply_ids.discard(job_id)
+                        failed_apply_jobs.pop(job_id, None)
                         print(f"  ✅ Applied: {title} at {company}")
                     else:
-                        print(f"  ❌ Failed: {title} at {company} — {result.get('error', '') or result.get('reason', '')}")
-                        manual.append(job)
+                        error = result.get('error', '') or result.get('reason', '')
+                        if error == 'job_closed':
+                            permanently_skipped.add(job_id)
+                            mark_permanently_skipped(job_id, reason="job_closed")
+                            failed_apply_ids.discard(job_id)
+                            failed_apply_jobs.pop(job_id, None)
+                            print(f"  ⏭️  Expired: {title} at {company} — job no longer open")
+                        else:
+                            failed_apply_ids.add(job_id)
+                            failed_apply_jobs[job_id] = job
+                            print(f"  ❌ Failed: {title} at {company} — {error}")
+                            manual.append(job)
 
                 elif platform == "ashby":
                     result = apply_ashby(
@@ -342,10 +362,24 @@ def run_job_discovery():
                         auto_applied.append(job)
                         save_application(job_id=job_id, company=company, title=title,
                                          platform="ashby", apply_url=apply_url)
+                        permanently_skipped.add(job_id)
+                        mark_permanently_skipped(job_id, reason="applied")
+                        failed_apply_ids.discard(job_id)
+                        failed_apply_jobs.pop(job_id, None)
                         print(f"  ✅ Applied: {title} at {company}")
                     else:
-                        print(f"  ❌ Failed: {title} at {company} — {result.get('error', '') or result.get('reason', '')}")
-                        manual.append(job)
+                        error = result.get('error', '') or result.get('reason', '')
+                        if error == 'job_closed':
+                            permanently_skipped.add(job_id)
+                            mark_permanently_skipped(job_id, reason="job_closed")
+                            failed_apply_ids.discard(job_id)
+                            failed_apply_jobs.pop(job_id, None)
+                            print(f"  ⏭️  Expired: {title} at {company} — job no longer open")
+                        else:
+                            failed_apply_ids.add(job_id)
+                            failed_apply_jobs[job_id] = job
+                            print(f"  ❌ Failed: {title} at {company} — {error}")
+                            manual.append(job)
 
                 else:
                     print(f"  ⏭️  No auto-apply handler for platform '{platform}': {title} at {company}")
@@ -359,6 +393,7 @@ def run_job_discovery():
             print(f"✅ ATTEMPT {attempt} COMPLETE")
             print(f"   Applied this attempt:   {len(auto_applied)}")
             print(f"   Applied today total:    {get_applied_today_count()}")
+            print(f"   Failed-apply retries:   {len(failed_apply_ids)}")
             print(f"   Total applied to date:  {stats.get('total_applied', 0)}")
             print(f"{'='*60}")
 
@@ -368,7 +403,6 @@ def run_job_discovery():
             traceback.print_exc()
             break
 
-    # send final daily report
     try:
         from core.tracker import get_stats
         stats = get_stats()
